@@ -1,64 +1,81 @@
-import json
+import os
+
+from tokenizers import Tokenizer
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+from tokenizers.models import BPE
+from tokenizers.pre_tokenizers import ByteLevel
+from tokenizers.processors import ByteLevel as ByteLevelProcessor
+from tokenizers.trainers import BpeTrainer
+
+
+SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>"]
+
 
 class RavenTokenizer:
     """
-    A simple character-level tokenizer for the RAVEN model.
-    It learns a vocabulary by finding all unique characters in the provided text.
+    Small byte-level BPE tokenizer for RAVEN.
+
+    Byte-level BPE keeps unknown characters from breaking generation while giving
+    the model word/subword tokens instead of single characters.
     """
 
-    def __init__(self, text=None):
-        """
-        Initializes the tokenizer.
-        If text is provided, builds the string-to-int (stoi) and int-to-string (itos) mappings.
-        """
-        self.stoi = {}
-        self.itos = {}
-        
-        if text is not None:
-            # Find all unique characters and sort them for a consistent vocabulary
-            chars = sorted(list(set(text)))
-            self.stoi = {ch: i for i, ch in enumerate(chars)}
-            self.itos = {i: ch for i, ch in enumerate(chars)}
+    def __init__(self, tokenizer=None):
+        self.tokenizer = tokenizer
 
-    def encode(self, text):
-        """
-        Converts a string of text into a list of integers based on the vocabulary.
-        """
-        # Looks up each character in the text and converts it to its integer ID
-        return [self.stoi[ch] for ch in text]
+    @classmethod
+    def train_from_file(cls, corpus_path, vocab_size, save_path):
+        tokenizer = Tokenizer(BPE(unk_token="<unk>"))
+        tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = ByteLevelDecoder()
+        tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
+
+        trainer = BpeTrainer(
+            vocab_size=vocab_size,
+            min_frequency=2,
+            special_tokens=SPECIAL_TOKENS,
+            show_progress=True,
+        )
+        tokenizer.train([corpus_path], trainer)
+
+        wrapper = cls(tokenizer)
+        wrapper.save(save_path)
+        return wrapper
+
+    @classmethod
+    def load(cls, path):
+        return cls(Tokenizer.from_file(path))
+
+    def save(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.tokenizer.save(path)
+
+    def encode(self, text, add_bos=False, add_eos=False):
+        ids = self.tokenizer.encode(text).ids
+        if add_bos:
+            ids = [self.bos_id] + ids
+        if add_eos:
+            ids = ids + [self.eos_id]
+        return ids
 
     def decode(self, tokens):
-        """
-        Converts a list of integers back into a string.
-        """
-        # Looks up each integer ID and converts it back to its original character
-        return ''.join([self.itos[i] for i in tokens])
+        return self.tokenizer.decode(list(tokens), skip_special_tokens=True)
 
     @property
     def vocab_size(self):
-        """
-        Returns the total number of unique characters in the vocabulary.
-        """
-        return len(self.stoi)
+        return self.tokenizer.get_vocab_size()
 
-    def save(self, path):
-        """
-        Saves the tokenizer vocabulary (stoi and itos) to a JSON file.
-        """
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump({
-                'stoi': self.stoi,
-                'itos': self.itos
-            }, f, indent=4)
+    @property
+    def pad_id(self):
+        return self.tokenizer.token_to_id("<pad>")
 
-    def load(self, path):
-        """
-        Loads the tokenizer vocabulary from a JSON file.
-        """
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            
-        self.stoi = data['stoi']
-        # When loading from JSON, the dictionary keys for itos will be strings.
-        # We need to convert them back to integers.
-        self.itos = {int(k): v for k, v in data['itos'].items()}
+    @property
+    def unk_id(self):
+        return self.tokenizer.token_to_id("<unk>")
+
+    @property
+    def bos_id(self):
+        return self.tokenizer.token_to_id("<bos>")
+
+    @property
+    def eos_id(self):
+        return self.tokenizer.token_to_id("<eos>")

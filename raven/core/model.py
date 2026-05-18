@@ -22,9 +22,10 @@ class Head(nn.Module):
         B, T, C = x.shape
         k = self.key(x)   # (B, T, head_size)
         q = self.query(x) # (B, T, head_size)
-        
+
         # Compute attention scores ("affinities")
-        wei = q @ k.transpose(-2, -1) * (C ** -0.5) # (B, T, T)
+        head_size = k.shape[-1]
+        wei = q @ k.transpose(-2, -1) * (head_size ** -0.5) # (B, T, T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
@@ -108,16 +109,20 @@ class RavenModel(nn.Module):
         
         # Final layer norm
         self.ln_f = nn.LayerNorm(config.n_embd)
-        
+
         # Final linear layer to output the next token probabilities (logits)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head.weight = self.token_embedding_table.weight
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B, T, C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=config.device)) # (T, C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T, C)
         
         # Add token and position embeddings together
         x = tok_emb + pos_emb # (B, T, C)
@@ -133,8 +138,8 @@ class RavenModel(nn.Module):
             loss = None
         else:
             B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
+            logits = logits.reshape(B*T, C)
+            targets = targets.reshape(B*T)
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
