@@ -1,36 +1,22 @@
 import torch
 
-# RAVEN v1 — 25M Parameter Config
-
-# Context window
-block_size = 256
-
-# Sequences processed in parallel
+block_size = 128
 batch_size = 64
-
-# Total training steps
-max_iters = 10000
-
-# Learning rate
+max_iters = 20000
 learning_rate = 3e-4
-
-# Print loss every N steps
 eval_interval = 500
+eval_iters = 100
+warmup_iters = 1000
+min_lr_ratio = 0.1
+weight_decay = 0.1
+grad_clip = 1.0
 
-# Embedding dimensions
-n_embd = 512
+n_embd = 64
+n_head = 4
+n_layer = 4
 
-# Attention heads
-n_head = 8
+dropout = 0.1
 
-# Transformer layers
-n_layer = 8
-
-# Dropout
-dropout = 0.2
-
-# Auto detect GPU
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Set by tokenizer at runtime
 vocab_size = 65

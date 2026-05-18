@@ -14,6 +14,27 @@ from core.tokenizer import RavenTokenizer
 from core.model import RavenModel
 from personality.system_prompt import SYSTEM_PROMPT
 
+def clean_response(text):
+    """
+    Keeps tiny-model responses short, speaker-safe, and less likely to end in
+    broken character-level fragments.
+    """
+    stop_markers = ["\nUser:", "User:", "\nRAVEN:", "RAVEN:"]
+    for marker in stop_markers:
+        if marker in text:
+            text = text.split(marker)[0]
+
+    text = text.strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = "\n".join(lines[:4])
+
+    if len(text) > 40 and text[-1:] not in {".", "?", "!", '"', "'"}:
+        last_stop = max(text.rfind("."), text.rfind("?"), text.rfind("!"))
+        if last_stop > 20:
+            text = text[:last_stop + 1]
+
+    return text.strip()
+
 def run():
     print("[RAVEN INITIALIZING...]")
     time.sleep(0.5)
@@ -40,7 +61,14 @@ def run():
 
     # 2. Load model
     model = RavenModel().to(config.device)
-    model.load_state_dict(torch.load(weights_path, map_location=config.device))
+    try:
+        model.load_state_dict(torch.load(weights_path, map_location=config.device))
+    except RuntimeError as e:
+        print("Error: Existing weights do not match the current model config.")
+        print("Use the same config values the checkpoint was trained with, or retrain with the updated settings.")
+        print(f"Current block_size is {config.block_size}.")
+        print(f"Details: {e}")
+        return
     model.eval()
 
     # 4. Starts an infinite input loop in the terminal
@@ -72,9 +100,17 @@ def run():
 
         idx = torch.tensor([encoded_prompt], dtype=torch.long, device=config.device)
         
-        # Generate new tokens. Let's limit generation to 200 characters to keep it sharp
-        # and prevent it from hallucinating infinitely.
-        generated_idx = model.generate(idx, max_new_tokens=200)
+        generated_idx = model.generate(
+            idx,
+            max_new_tokens=120,
+            temperature=0.65,
+            top_k=32,
+            top_p=0.88,
+            repetition_penalty=1.18,
+            stop_strings=["\nUser:", "User:", "\n\nUser:"],
+            tokenizer=tokenizer,
+            min_new_tokens=12,
+        )
         
         # 8. Decodes and prints the response
         response = tokenizer.decode(generated_idx[0].tolist())
@@ -82,11 +118,9 @@ def run():
         # Isolate the newly generated text (everything after the prompt we fed it)
         new_text = response[len(prompt):]
         
-        # For a character-level LLM, we should cut it off if it starts hallucinating the next User turn
-        if "User:" in new_text:
-            new_text = new_text.split("User:")[0]
+        new_text = clean_response(new_text)
             
-        print(f"RAVEN: {new_text.strip()}\n")
+        print(f"RAVEN: {new_text}\n")
 
 if __name__ == '__main__':
     run()

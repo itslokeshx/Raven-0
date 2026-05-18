@@ -139,29 +139,87 @@ class RavenModel(nn.Module):
 
         return logits, loss
 
-    def generate(self, idx, max_new_tokens):
+    @torch.no_grad()
+    def generate(
+        self,
+        idx,
+        max_new_tokens=120,
+        temperature=0.65,
+        top_k=32,
+        top_p=0.88,
+        repetition_penalty=1.18,
+        repetition_window=80,
+        stop_tokens=None,
+        stop_strings=None,
+        tokenizer=None,
+        min_new_tokens=12,
+    ):
         """
-        Generates new tokens one by one, appending them to the input sequence.
+        Controlled autoregressive generation for tiny character-level models.
+        Combines temperature, top-k, nucleus sampling, repetition penalty, and
+        stop conditions to reduce gibberish and repetition loops.
         """
-        # idx is (B, T) array of indices in the current context
+        if idx.shape[0] != 1:
+            raise ValueError("generate() currently supports batch size 1 for stop-string handling.")
+
+        self.eval()
+
+        stop_tokens = set(stop_tokens or [])
+        stop_strings = stop_strings or []
+        original_len = idx.shape[1]
+
         for _ in range(max_new_tokens):
-            # Crop idx to the last block_size tokens, since our position embeddings 
-            # only go up to block_size
             idx_cond = idx[:, -config.block_size:]
-            
-            # Get the predictions
-            logits, loss = self(idx_cond)
-            
-            # Focus only on the last time step (the prediction for the next character)
-            logits = logits[:, -1, :] # becomes (B, C)
-            
-            # Apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
-            
-            # Sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            
-            # Append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
-            
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]
+
+            if repetition_penalty and repetition_penalty != 1.0:
+                recent_tokens = idx[0, -repetition_window:].tolist()
+                for token_id in set(recent_tokens):
+                    if logits[0, token_id] > 0:
+                        logits[0, token_id] /= repetition_penalty
+                    else:
+                        logits[0, token_id] *= repetition_penalty
+
+            temperature = max(float(temperature), 1e-5)
+            logits = logits / temperature
+
+            if top_k is not None and top_k > 0:
+                k = min(top_k, logits.size(-1))
+                values, _ = torch.topk(logits, k)
+                cutoff = values[:, -1].unsqueeze(-1)
+                logits = logits.masked_fill(logits < cutoff, float("-inf"))
+
+            if top_p is not None and 0.0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                sorted_probs = F.softmax(sorted_logits, dim=-1)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+                sorted_remove = cumulative_probs > top_p
+                sorted_remove[:, 1:] = sorted_remove[:, :-1].clone()
+                sorted_remove[:, 0] = False
+
+                remove = torch.zeros_like(logits, dtype=torch.bool)
+                remove.scatter_(1, sorted_indices, sorted_remove)
+                logits = logits.masked_fill(remove, float("-inf"))
+
+            probs = F.softmax(logits, dim=-1)
+            if torch.isnan(probs).any() or probs.sum() <= 0:
+                probs = torch.ones_like(probs) / probs.size(-1)
+
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+
+            generated_len = idx.shape[1] - original_len
+            if generated_len < min_new_tokens:
+                continue
+
+            if idx_next.item() in stop_tokens:
+                break
+
+            if tokenizer is not None and stop_strings:
+                generated_text = tokenizer.decode(idx[0, original_len:].tolist())
+                if any(stop_string in generated_text for stop_string in stop_strings):
+                    break
+
         return idx
