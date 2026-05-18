@@ -14,6 +14,14 @@ from core.tokenizer import RavenTokenizer
 from core.model import RavenModel
 from personality.system_prompt import SYSTEM_PROMPT
 
+
+def artifact_dir():
+    return config.checkpoint_dir or root_dir
+
+
+def artifact_path(filename):
+    return os.path.join(artifact_dir(), filename)
+
 def clean_response(text):
     """
     Keeps tiny-model responses short, speaker-safe, and less likely to end in
@@ -44,18 +52,19 @@ def run():
     time.sleep(0.5)
     print("Good evening.\n")
 
-    vocab_path = os.path.join(root_dir, 'raven_vocab.json')
-    weights_path = os.path.join(root_dir, 'raven_weights.pt')
+    tokenizer_path = artifact_path(config.tokenizer_file)
+    weights_path = artifact_path(config.weights_file)
 
-    if not os.path.exists(vocab_path) or not os.path.exists(weights_path):
-        print("Error: Missing model weights or vocabulary.")
+    if not os.path.exists(tokenizer_path) or not os.path.exists(weights_path):
+        print("Error: Missing model weights or BPE tokenizer.")
         print("Please run 'python core/trainer.py' first to train the model.")
+        print(f"Expected tokenizer: {tokenizer_path}")
+        print(f"Expected weights:   {weights_path}")
         return
 
     # 1. Load tokenizer
-    tokenizer = RavenTokenizer()
-    tokenizer.load(vocab_path)
-    
+    tokenizer = RavenTokenizer.load(tokenizer_path)
+
     # Update config so model initializes with correct layer sizes
     config.vocab_size = tokenizer.vocab_size
 
@@ -93,9 +102,9 @@ def run():
         # 7. Encodes it and feeds to model.generate()
         # Handle cases where user inputs characters outside our vocabulary
         try:
-            encoded_prompt = tokenizer.encode(prompt)
-        except KeyError as e:
-            print(f"RAVEN: You used an unrecognizable character: {e}. My vocabulary is limited to the training corpus. Try again.\n")
+            encoded_prompt = tokenizer.encode(prompt, add_bos=True)
+        except Exception as e:
+            print(f"RAVEN: Tokenization failed: {e}\n")
             continue
 
         idx = torch.tensor([encoded_prompt], dtype=torch.long, device=config.device)
@@ -107,6 +116,7 @@ def run():
             top_k=32,
             top_p=0.88,
             repetition_penalty=1.18,
+            stop_tokens=[tokenizer.eos_id],
             stop_strings=["\nUser:", "User:", "\n\nUser:"],
             tokenizer=tokenizer,
             min_new_tokens=12,
