@@ -12,7 +12,7 @@ Not fine-tuned. Not wrapped. Not an API call wearing a costume.
 
 Every layer, every weight, every token — built by hand using raw Python and PyTorch, starting from zero. No pretrained weights. No Hugging Face pipelines. No shortcuts.
 
-Most AI projects start with someone else's model and dress it up.  
+Most AI projects start with someone else's model and dress it up.
 RAVEN starts at zero.
 
 ---
@@ -21,8 +21,8 @@ RAVEN starts at zero.
 
 Because building a language model from scratch is how you actually understand one.
 
-Not by reading about attention mechanisms.  
-Not by fine-tuning someone else's weights.  
+Not by reading about attention mechanisms.
+Not by fine-tuning someone else's weights.
 By building the tokenizer, the embeddings, the transformer blocks, the training loop — every piece — until the machine speaks in your own terms.
 
 RAVEN is a learning project first. But a learning project doesn't have to be boring.
@@ -66,7 +66,7 @@ Whether you actually want to is a different question.
 What's the task?
 ```
 
-This is not a tone bolted on after training.  
+This is not a tone bolted on after training.
 It is a design constraint built in from the start.
 
 ---
@@ -148,12 +148,38 @@ Every component understood before it is used.
 
 ## Scope — v1
 
-RAVEN v1 is focused on one thing:
+RAVEN v2 is focused on one thing:
 
-**Local text generation with a consistent personality.**
+**A small local multitask model that keeps a consistent RAVEN personality.**
 
-Nothing else. No voice. No memory database. No web access. No vision.  
-Just a model that generates text, knows who it is, and sounds like nothing else you've talked to.
+No voice. No memory database. No web access. No vision.
+Just a compact transformer trained from scratch on clean RAVEN-heavy text.
+
+Current target:
+
+| Setting | Value |
+| --- | --- |
+| Parameters | ~30M |
+| Tokenizer | Byte-level BPE |
+| Vocabulary | 8,192 tokens |
+| Context | 256 tokens |
+| GPU target | Colab T4 |
+
+Prepare data:
+
+```bash
+python3 raven/data/build_corpus.py
+```
+
+Train:
+
+```bash
+cd raven
+python3 core/trainer.py
+```
+
+On Colab, checkpoints are saved to Google Drive when `/content/drive/MyDrive`
+is mounted. Otherwise they are saved inside `raven/`.
 
 ---
 

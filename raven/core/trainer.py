@@ -116,17 +116,35 @@ def load_or_train_tokenizer(corpus_path):
 
 def load_or_encode_tokens(corpus_path, tokenizer):
     token_cache = artifact_path(config.token_cache_file)
+    corpus_stat = os.stat(corpus_path)
+    expected_meta = {
+        "corpus_size": corpus_stat.st_size,
+        "corpus_mtime_ns": corpus_stat.st_mtime_ns,
+        "vocab_size": tokenizer.vocab_size,
+    }
+
     if os.path.exists(token_cache):
         print(f"Loading token cache: {token_cache}")
-        data = torch.load(token_cache, map_location="cpu", weights_only=True)
+        cached = torch.load(token_cache, map_location="cpu", weights_only=False)
+        if isinstance(cached, dict) and cached.get("meta") == expected_meta:
+            data = cached["tokens"]
+        elif isinstance(cached, torch.Tensor):
+            print("Old token cache format found; re-encoding.")
+            data = None
+        else:
+            print("Token cache is stale; re-encoding.")
+            data = None
     else:
+        data = None
+
+    if data is None:
         print("Encoding corpus with BPE tokenizer...")
         with open(corpus_path, "r", encoding="utf-8") as f:
             text = f.read()
         ids = tokenizer.encode(text, add_bos=True, add_eos=True)
         dtype = torch.int32 if tokenizer.vocab_size <= 2**31 - 1 else torch.int64
         data = torch.tensor(ids, dtype=dtype)
-        torch.save(data, token_cache)
+        torch.save({"meta": expected_meta, "tokens": data}, token_cache)
         print(f"Saved token cache: {token_cache}")
 
     if len(data) <= config.block_size + 1:

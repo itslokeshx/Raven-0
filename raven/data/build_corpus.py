@@ -1,43 +1,52 @@
 import os
-import subprocess
+from pathlib import Path
 
-# 1. Rename existing corpus.txt (the 500 lines of dialogue) to raven_dialogue.txt
-if os.path.exists("corpus.txt"):
-    os.rename("corpus.txt", "raven_dialogue.txt")
 
-urls = {
-    'beyond_good_evil.txt': 'https://www.gutenberg.org/ebooks/4363.txt.utf-8',
-    'zarathustra.txt': 'https://www.gutenberg.org/ebooks/1998.txt.utf-8',
-    'genealogy_morals.txt': 'https://www.gutenberg.org/ebooks/52319.txt.utf-8',
-    'meditations.txt': 'https://www.gutenberg.org/ebooks/2680.txt.utf-8',
-    'the_prince.txt': 'https://www.gutenberg.org/ebooks/1232.txt.utf-8',
-    'art_of_war.txt': 'https://www.gutenberg.org/ebooks/132.txt.utf-8',
-    'heart_of_darkness.txt': 'https://www.gutenberg.org/ebooks/526.txt.utf-8',
-    'notes_underground.txt': 'https://www.gutenberg.org/ebooks/600.txt.utf-8',
-    'crime_punishment.txt': 'https://www.gutenberg.org/ebooks/2554.txt.utf-8',
-    'jekyll_hyde.txt': 'https://www.gutenberg.org/ebooks/43.txt.utf-8'
-}
+DATA_DIR = Path(__file__).resolve().parent
+PARTS_DIR = DATA_DIR / "parts"
+OUTPUT_PATH = DATA_DIR / "corpus.txt"
 
-# 2. Download all the files using curl
-for filename, url in urls.items():
-    print(f"Downloading {filename}...")
-    subprocess.run(["curl", "-s", "-L", "-o", filename, url])
+# Keep the model RAVEN-first. These percentages are enforced by repetition
+# when source files are smaller than the requested mix.
+MIX = [
+    ("raven_dialogue.txt", 60),
+    ("psychology.txt", 10),
+    ("dark_humor.txt", 10),
+    ("math_science_facts.txt", 15),
+    ("philosophy.txt", 5),
+]
 
-# 3. Merge all the texts together
-files_to_merge = list(urls.keys()) + ["raven_dialogue.txt"]
 
-print("\nMerging into corpus.txt...")
-with open("corpus.txt", "wb") as outfile:
-    for filename in files_to_merge:
-        if os.path.exists(filename):
-            with open(filename, "rb") as infile:
-                outfile.write(infile.read())
-            # Add a newline between files just in case
-            outfile.write(b"\n")
-        else:
-            print(f"Warning: {filename} not found, skipping.")
+def read_part(filename):
+    path = PARTS_DIR / filename
+    if not path.exists():
+        print(f"Missing {path}; skipping.")
+        return ""
+    return path.read_text(encoding="utf-8").strip()
 
-# Print final size
-size = os.path.getsize("corpus.txt")
-print(f"\nCorpus built successfully.")
-print(f"Total Size: {size / 1024 / 1024:.2f} MB ({size} bytes)")
+
+def main():
+    PARTS_DIR.mkdir(parents=True, exist_ok=True)
+    sections = []
+
+    for filename, weight in MIX:
+        text = read_part(filename)
+        if not text:
+            continue
+        sections.extend([text] * weight)
+
+    if not sections:
+        raise SystemExit(
+            f"No corpus parts found in {PARTS_DIR}.\n"
+            "Add raven_dialogue.txt, psychology.txt, dark_humor.txt, "
+            "math_science_facts.txt, and philosophy.txt."
+        )
+
+    OUTPUT_PATH.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    size_mb = os.path.getsize(OUTPUT_PATH) / 1024 / 1024
+    print(f"Built {OUTPUT_PATH}")
+    print(f"Size: {size_mb:.2f} MB")
+
+
+if __name__ == "__main__":
+    main()

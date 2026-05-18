@@ -46,7 +46,9 @@ class RavenTokenizer:
         return cls(Tokenizer.from_file(path))
 
     def save(self, path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         self.tokenizer.save(path)
 
     def encode(self, text, add_bos=False, add_eos=False):
