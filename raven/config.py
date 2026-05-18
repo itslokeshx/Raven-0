@@ -1,37 +1,36 @@
 import torch
 
-# RAVEN Hyperparameters
+# RAVEN v1 — 25M Parameter Config
 
-# block_size: How many characters the model can "see" at once to predict the next one (context window)
-block_size = 128 
+# Context window
+block_size = 256
 
-# batch_size: How many independent sequences will be processed in parallel during training
-batch_size = 32
+# Sequences processed in parallel
+batch_size = 64
 
-# max_iters: Total number of training steps to run
-max_iters = 5000
+# Total training steps
+max_iters = 10000
 
-# learning_rate: The step size for the optimizer to update model weights
-learning_rate = 1e-3
+# Learning rate
+learning_rate = 3e-4
 
-# eval_interval: How often to evaluate the model on train/val sets and print the loss
-eval_interval = 250
+# Print loss every N steps
+eval_interval = 500
 
-# n_embd: The size of the embedding vectors (how many dimensions represent one character)
-n_embd = 64
+# Embedding dimensions
+n_embd = 512
 
-# n_head: Number of attention heads (must divide n_embd evenly)
-n_head = 4
+# Attention heads
+n_head = 8
 
-# n_layer: Number of transformer blocks (layers of processing)
-n_layer = 4
+# Transformer layers
+n_layer = 8
 
-# dropout: Percentage of neurons to randomly turn off to prevent overfitting (0.0 to 1.0)
-dropout = 0.0
+# Dropout
+dropout = 0.2
 
-# device: Auto-detect if a GPU is available, otherwise fall back to CPU
+# Auto detect GPU
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# vocab_size: Placeholder for vocabulary size (number of unique characters). 
-# This will be updated by the tokenizer once it reads the text.
+# Set by tokenizer at runtime
 vocab_size = 65

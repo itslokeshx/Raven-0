@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+*corpus.txt
 # Distribution / packaging
 bin/
 build/
@@ -154,3 +154,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+raven/data/corpus.txt
+raven/data/unique_books.txt
+raven/data/books/
