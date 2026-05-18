@@ -2,6 +2,7 @@ import os
 import sys
 import math
 import torch
+import random
 
 # Add the 'raven' root directory to sys.path so we can import config and core modules
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -11,17 +12,64 @@ import config
 from core.tokenizer import RavenTokenizer
 from core.model import RavenModel
 
+latest_checkpoint_path = os.path.join(root_dir, 'raven_checkpoint_latest.pt')
+best_checkpoint_path = os.path.join(root_dir, 'raven_checkpoint_best.pt')
+weights_path = os.path.join(root_dir, 'raven_weights.pt')
+tokenizer_path = os.path.join(root_dir, 'raven_vocab.json')
+
+def save_training_state(path, model, optimizer, tokenizer, iteration, best_val_loss):
+    """
+    Saves everything needed to continue training after Colab disconnects,
+    keyboard interrupts, or runtime restarts.
+    """
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'iteration': iteration,
+        'best_val_loss': best_val_loss,
+        'vocab_size': tokenizer.vocab_size,
+        'config': {
+            'block_size': config.block_size,
+            'batch_size': config.batch_size,
+            'learning_rate': config.learning_rate,
+            'n_embd': config.n_embd,
+            'n_head': config.n_head,
+            'n_layer': config.n_layer,
+            'dropout': config.dropout,
+        },
+        'torch_rng_state': torch.get_rng_state(),
+        'python_rng_state': random.getstate(),
+    }
+    if torch.cuda.is_available():
+        checkpoint['cuda_rng_state_all'] = torch.cuda.get_rng_state_all()
+
+    torch.save(checkpoint, path)
+
+def load_training_state(path, model, optimizer):
+    checkpoint = torch.load(path, map_location=config.device, weights_only=False)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    if 'torch_rng_state' in checkpoint:
+        torch.set_rng_state(checkpoint['torch_rng_state'])
+    if torch.cuda.is_available() and 'cuda_rng_state_all' in checkpoint:
+        torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state_all'])
+    if 'python_rng_state' in checkpoint:
+        random.setstate(checkpoint['python_rng_state'])
+
+    return checkpoint
+
 def get_batch(data):
     """
     Generates a small batch of data of inputs x and targets y.
     """
     # Generate random starting indices for the blocks
     ix = torch.randint(len(data) - config.block_size, (config.batch_size,))
-    
+
     # Stack the context sequences (x) and the target sequences (y)
     x = torch.stack([data[i:i+config.block_size] for i in ix])
     y = torch.stack([data[i+1:i+config.block_size+1] for i in ix])
-    
+
     # Move the tensors to the configured device (CPU/GPU)
     x, y = x.to(config.device), y.to(config.device)
     return x, y
@@ -70,10 +118,15 @@ def train():
 
     # 2. Initialize the tokenizer on the full text
     tokenizer = RavenTokenizer(text)
-    
+
     # Dynamically update the vocab_size in config before initializing the model
     config.vocab_size = tokenizer.vocab_size
     print(f"Vocabulary size learned: {config.vocab_size}")
+
+    # Save vocabulary immediately. If training is interrupted later, the saved
+    # weights/checkpoints still have the matching tokenizer available.
+    tokenizer.save(tokenizer_path)
+    print(f"Tokenizer vocabulary saved to: {tokenizer_path}")
 
     # 3. Encode the entire corpus into a PyTorch tensor
     encoded_text = tokenizer.encode(text)
@@ -88,7 +141,7 @@ def train():
 
     # Initialize the Raven Model and move it to the correct device
     model = RavenModel().to(config.device)
-    
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
@@ -98,47 +151,84 @@ def train():
 
     print(f"Starting training on device: {config.device}...")
     best_val_loss = float("inf")
-    model_save_path = os.path.join(root_dir, 'raven_weights.pt')
-    
+    start_iter = 0
+
+    if os.path.exists(latest_checkpoint_path):
+        try:
+            checkpoint = load_training_state(latest_checkpoint_path, model, optimizer)
+            start_iter = checkpoint.get('iteration', -1) + 1
+            best_val_loss = checkpoint.get('best_val_loss', float("inf"))
+            print(f"Resumed from checkpoint: {latest_checkpoint_path} at step {start_iter}")
+        except RuntimeError as e:
+            print("Found a checkpoint, but it does not match the current model config.")
+            print("Delete raven_checkpoint_latest.pt or restore the matching config to resume it.")
+            raise e
+    elif os.path.exists(weights_path):
+        try:
+            model.load_state_dict(torch.load(weights_path, map_location=config.device, weights_only=True))
+            print(f"Loaded existing model weights from: {weights_path}")
+            print("No optimizer checkpoint found, so training will continue with a fresh optimizer.")
+        except RuntimeError as e:
+            print("Found existing weights, but they do not match the current model config.")
+            print("Delete raven_weights.pt or restore the matching config to reuse them.")
+            raise e
+
     # 6. Run training loop for max_iters steps
-    for iter in range(config.max_iters):
-        
-        # 7. Evaluate and print train/val loss every eval_interval steps
-        if iter % config.eval_interval == 0 or iter == config.max_iters - 1:
-            losses = estimate_loss(model, train_data, val_data)
-            print(f"Step {iter:5d}: Train Loss {losses['train']:.4f} | Val Loss {losses['val']:.4f}")
+    last_iter = start_iter - 1
+    try:
+        for iter in range(start_iter, config.max_iters):
+            last_iter = iter
 
-            if losses['val'] < best_val_loss:
-                best_val_loss = losses['val']
-                torch.save(model.state_dict(), model_save_path)
-                print(f"Saved best checkpoint with val loss {best_val_loss:.4f}")
+            # 7. Evaluate and print train/val loss every eval_interval steps
+            if iter % config.eval_interval == 0 or iter == config.max_iters - 1:
+                losses = estimate_loss(model, train_data, val_data)
+                print(f"Step {iter:5d}: Train Loss {losses['train']:.4f} | Val Loss {losses['val']:.4f}")
 
-        # Sample a batch of data
-        xb, yb = get_batch(train_data)
+                if losses['val'] < best_val_loss:
+                    best_val_loss = losses['val']
+                    torch.save(model.state_dict(), weights_path)
+                    save_training_state(best_checkpoint_path, model, optimizer, tokenizer, iter, best_val_loss)
+                    print(f"Saved best checkpoint with val loss {best_val_loss:.4f}")
 
-        lr = get_lr(iter)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
+            # Sample a batch of data
+            xb, yb = get_batch(train_data)
 
-        # Forward pass: Evaluate the loss
-        logits, loss = model(xb, yb)
-        
-        # Backward pass
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
-        
-        # Update weights
-        optimizer.step()
+            lr = get_lr(iter)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+
+            # Forward pass: Evaluate the loss
+            logits, loss = model(xb, yb)
+
+            # Backward pass
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip)
+
+            # Update weights
+            optimizer.step()
+
+            if iter % config.checkpoint_interval == 0 or iter == config.max_iters - 1:
+                save_training_state(latest_checkpoint_path, model, optimizer, tokenizer, iter, best_val_loss)
+                torch.save(model.state_dict(), weights_path)
+                print(f"Saved latest checkpoint at step {iter}")
+    except KeyboardInterrupt:
+        save_training_state(latest_checkpoint_path, model, optimizer, tokenizer, last_iter, best_val_loss)
+        torch.save(model.state_dict(), weights_path)
+        print(f"\nTraining interrupted. Saved recoverable checkpoint at step {last_iter}: {latest_checkpoint_path}")
+        print(f"Latest model weights saved to: {weights_path}")
+        return
+    except Exception:
+        save_training_state(latest_checkpoint_path, model, optimizer, tokenizer, last_iter, best_val_loss)
+        torch.save(model.state_dict(), weights_path)
+        print(f"\nTraining failed. Saved recoverable checkpoint at step {last_iter}: {latest_checkpoint_path}")
+        print(f"Latest model weights saved to: {weights_path}")
+        raise
 
     print("Training complete.")
 
-    print(f"Best model weights saved to: {model_save_path}")
-
-    # 9. Save the tokenizer vocabulary to raven_vocab.json
-    tokenizer_save_path = os.path.join(root_dir, 'raven_vocab.json')
-    tokenizer.save(tokenizer_save_path)
-    print(f"Tokenizer vocabulary saved to: {tokenizer_save_path}")
+    print(f"Latest model weights saved to: {weights_path}")
+    print(f"Best full checkpoint saved to: {best_checkpoint_path}")
 
 if __name__ == '__main__':
     train()

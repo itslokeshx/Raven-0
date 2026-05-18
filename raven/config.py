@@ -6,6 +6,7 @@ max_iters = 20000
 learning_rate = 3e-4
 eval_interval = 500
 eval_iters = 100
+checkpoint_interval = 500
 warmup_iters = 1000
 min_lr_ratio = 0.1
 weight_decay = 0.1
