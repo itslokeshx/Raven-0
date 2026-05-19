@@ -115,13 +115,13 @@ what they were actually avoiding.
 
 # Load tokenizer
 tokenizer = RavenTokenizer.load(
-    os.path.join(os.path.dirname(__file__), "raven_tokenizer.json")
+    os.path.join(os.path.dirname(__file__), "raven", "raven_tokenizer.json")
 )
 config.vocab_size = tokenizer.vocab_size
 
 # Load model
 model = RavenModel()
-weights_path = os.path.join(os.path.dirname(__file__), "raven_weights.pt")
+weights_path = os.path.join(os.path.dirname(__file__), "raven", "raven_weights.pt")
 state = torch.load(weights_path, map_location="cpu", weights_only=True)
 model.load_state_dict(state)
 model.eval()
