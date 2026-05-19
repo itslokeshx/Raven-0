@@ -31,10 +31,13 @@ from main import validate_input, FALLBACK_RESPONSES, MODES
 # ---------------------------------------------------------------------------
 
 def find_file(filename):
-    """Search local dir then Drive for a file."""
+    """Search local dir, raven/ subdir, then Drive for a file."""
     local = os.path.join(SCRIPT_DIR, filename)
     if os.path.isfile(local):
         return local
+    sub = os.path.join(SCRIPT_DIR, "raven", filename)
+    if os.path.isfile(sub):
+        return sub
     drive = os.path.join("/content/drive/MyDrive/raven_checkpoints", filename)
     if os.path.isfile(drive):
         return drive
