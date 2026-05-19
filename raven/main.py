@@ -1,99 +1,169 @@
+"""
+RAVEN v1 — Main inference loop.
+
+Handles boot sequence, model/tokenizer loading, generation with
+post-processing, slash commands, mood modes, and conversation history.
+All error paths are caught — the loop never crashes.
+"""
+
 import os
 import random
+import re
 import sys
 import time
-from pathlib import Path
 
+# pyrefly: ignore [missing-import]
 import torch
 
-
-ROOT_DIR = Path(__file__).resolve().parent
-if str(ROOT_DIR) not in sys.path:
-    sys.path.append(str(ROOT_DIR))
+# ---------------------------------------------------------------------------
+# Path setup — ensure the raven package root is importable
+# ---------------------------------------------------------------------------
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
 
 import config
 from core.model import RavenModel
 from core.tokenizer import RavenTokenizer
 from personality.system_prompt import SYSTEM_PROMPT
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 BOOT_LINES = [
-    "[RAVEN v2 BOOT]",
-    "Core online.",
-    "Voice sharpened.",
-    "Patience budget: low.",
+    "[RAVEN v1 — INITIALIZING]",
+    "████████████████████████ 100%",
+    "",
+    "Scanning environment............  OK",
+    "Loading behavior engine.........  OK",
+    "Calibrating sarcasm threshold...  EXCEEDED",
+    "Checking patience levels........  LOW",
+    "Detecting user..................  FOUND",
+    "",
+    "Good evening.",
+    "The machine is watching.",
     "",
 ]
 
+BOOT_DELAY = 0.04
+LINE_DELAY = 0.025
+
+# Mood modes — each adjusts generation sampling
 MODES = {
-    "default": {"temperature": 0.8, "top_k": 40, "top_p": 0.9},
-    "savage": {"temperature": 1.0, "top_k": 50, "top_p": 0.92},
-    "philosopher": {"temperature": 0.7, "top_k": 32, "top_p": 0.88},
-    "chaos": {"temperature": 1.15, "top_k": 80, "top_p": 0.95},
-    "nox": {"temperature": 0.55, "top_k": 24, "top_p": 0.86},
-    "durden": {"temperature": 1.05, "top_k": 64, "top_p": 0.92},
+    "default":     {"temperature": 0.75, "top_k": 35, "top_p": 0.88},
+    "savage":      {"temperature": 0.95, "top_k": 45, "top_p": 0.93},
+    "philosopher": {"temperature": 0.65, "top_k": 25, "top_p": 0.82},
+    "chaos":       {"temperature": 1.1,  "top_k": 70, "top_p": 0.97},
+    "nox":         {"temperature": 0.5,  "top_k": 15, "top_p": 0.78},
+    "durden":      {"temperature": 1.0,  "top_k": 55, "top_p": 0.94},
 }
 
-EMPTY_RESPONSES = [
+# Fallback responses when generation produces nothing usable
+FALLBACK_RESPONSES = [
     "...",
     "Interesting. Nothing to say about that.",
-    "The silence is doing more work than the question.",
+    "The silence is more honest than your question.",
+    "Pattern recognized. Filing it away.",
 ]
 
-BOOT_DELAY = 0.03
-LINE_DELAY = 0.02
-MAX_NEW_TOKENS = 200
-HISTORY_TURNS = 3
+# Single-word greetings to detect
+GREETINGS = {"hi", "hello", "hey", "sup", "yo"}
+
+# Max lines in a response
 MAX_RESPONSE_LINES = 4
 
+# Max characters per line
+MAX_LINE_LENGTH = 80
 
-def sleep_print(line="", delay=BOOT_DELAY):
-    print(line)
-    time.sleep(delay)
+# History depth — keep last 4 turns
+HISTORY_DEPTH = 4
 
+# Last 2 turns fed into the prompt context
+PROMPT_HISTORY_DEPTH = 2
+
+# Max user input length
+MAX_INPUT_LENGTH = 500
+
+# Pattern to detect math-only input (digits, operators, spaces, parens)
+MATH_PATTERN = re.compile(r"^[\d\s\+\-\*\/\%\^\(\)\.]+$")
+
+
+# ===========================================================================
+# FEATURE 1 — Boot Sequence
+# ===========================================================================
 
 def boot_sequence():
+    """Print the RAVEN boot animation with delays."""
     for line in BOOT_LINES:
-        sleep_print(line)
+        print(line)
+        time.sleep(BOOT_DELAY)
 
 
-def candidate_paths(filename):
-    return [directory / filename for directory in config.artifact_search_dirs()]
+# ===========================================================================
+# FEATURE 2 — File Loading
+# ===========================================================================
+
+def find_file(filename):
+    """
+    Search for a file in priority order:
+    1. Same directory as main.py
+    2. /content/drive/MyDrive/raven_checkpoints/
+    Returns the path string if found, else None.
+    """
+    # Priority 1: same directory as this script
+    local_path = os.path.join(SCRIPT_DIR, filename)
+    if os.path.isfile(local_path):
+        return local_path
+
+    # Priority 2: Google Drive checkpoint directory
+    drive_path = os.path.join("/content/drive/MyDrive/raven_checkpoints", filename)
+    if os.path.isfile(drive_path):
+        return drive_path
+
+    return None
 
 
-def print_missing_file_error(label, filename):
-    print(f"[RAVEN ERROR] Missing {label}.")
-    print("Expected one of:")
-    for path in candidate_paths(filename):
-        print(f"  {path}")
+def find_weights():
+    """
+    Locate model weights in priority order:
+    1. raven_weights.pt (local → drive)
+    2. raven_checkpoint_latest.pt (local → drive)
+    Returns (path, is_checkpoint) or (None, False).
+    """
+    # Try primary weights file first
+    path = find_file("raven_weights.pt")
+    if path:
+        return path, False
+
+    # Try latest checkpoint as fallback
+    path = find_file("raven_checkpoint_latest.pt")
+    if path:
+        return path, True
+
+    return None, False
 
 
 def torch_load(path, map_location=None, weights_only=False):
+    """Load a torch file, handling older PyTorch versions."""
     try:
         return torch.load(path, map_location=map_location, weights_only=weights_only)
     except TypeError:
         return torch.load(path, map_location=map_location)
 
 
-def load_state_dict_from_artifacts():
-    weights_path = config.find_artifact(config.weights_file)
-    if weights_path:
-        payload = torch_load(weights_path, map_location=config.device, weights_only=True)
-        return payload, weights_path
-
-    checkpoint_path = config.find_artifact(config.latest_checkpoint_file)
-    if checkpoint_path:
-        payload = torch_load(checkpoint_path, map_location=config.device, weights_only=False)
-        if isinstance(payload, dict) and "model_state_dict" in payload:
-            return payload["model_state_dict"], checkpoint_path
-
-    return None, None
-
-
 def load_runtime():
-    tokenizer_path = config.find_artifact(config.tokenizer_file)
+    """
+    Load tokenizer and model weights. Returns (model, tokenizer, param_count)
+    or (None, None, 0) on failure.
+    """
+    # --- Tokenizer ---
+    tokenizer_path = find_file("raven_tokenizer.json")
     if tokenizer_path is None:
-        print_missing_file_error("BPE tokenizer", config.tokenizer_file)
+        print("[RAVEN ERROR] Missing tokenizer.")
+        print("Searched:")
+        print(f"  {os.path.join(SCRIPT_DIR, 'raven_tokenizer.json')}")
+        print(f"  /content/drive/MyDrive/raven_checkpoints/raven_tokenizer.json")
         return None, None, 0
 
     try:
@@ -102,13 +172,40 @@ def load_runtime():
         print(f"[RAVEN ERROR] Could not load tokenizer: {exc}")
         return None, None, 0
 
-    config.vocab_size = tokenizer.vocab_size
-    state_dict, model_path = load_state_dict_from_artifacts()
-    if state_dict is None:
-        print_missing_file_error("model weights or latest checkpoint", config.weights_file)
+    # --- Weights ---
+    weights_path, is_checkpoint = find_weights()
+    if weights_path is None:
+        print("[RAVEN ERROR] Missing model weights.")
+        print("Searched:")
+        print(f"  {os.path.join(SCRIPT_DIR, 'raven_weights.pt')}")
+        print(f"  /content/drive/MyDrive/raven_checkpoints/raven_weights.pt")
+        print(f"  {os.path.join(SCRIPT_DIR, 'raven_checkpoint_latest.pt')}")
+        print(f"  /content/drive/MyDrive/raven_checkpoints/raven_checkpoint_latest.pt")
         return None, None, 0
 
+    try:
+        payload = torch_load(
+            weights_path,
+            map_location=config.device,
+            weights_only=not is_checkpoint,
+        )
+    except Exception as exc:
+        print(f"[RAVEN ERROR] Failed to load weights: {exc}")
+        return None, None, 0
+
+    # Extract state dict from checkpoint if needed
+    if is_checkpoint and isinstance(payload, dict) and "model_state_dict" in payload:
+        state_dict = payload["model_state_dict"]
+    elif isinstance(payload, dict) and "model_state_dict" not in payload:
+        # Assume it's a raw state dict
+        state_dict = payload
+    else:
+        state_dict = payload
+
+    # --- Build model ---
+    config.vocab_size = tokenizer.vocab_size
     model = RavenModel().to(config.device)
+
     try:
         model.load_state_dict(state_dict)
     except Exception as exc:
@@ -118,184 +215,299 @@ def load_runtime():
 
     model.eval()
     total_params = model.get_num_params()
+
+    # Print load summary
     print(f"Tokenizer: {tokenizer_path}")
-    print(f"Model: {model_path}")
+    print(f"Model: {weights_path}")
     print(f"Parameters: {total_params:,}")
     print(f"Device: {config.device}")
-    print("[RAVEN READY]\n")
+    print("[RAVEN READY]")
+    print()
+
     return model, tokenizer, total_params
 
 
-def build_prompt(user_input, history):
-    recent = "\n\n".join(history[-HISTORY_TURNS:])
-    if recent:
-        return f"{SYSTEM_PROMPT}\n{recent}\n\nUser: {user_input}\nRAVEN:"
-    return f"{SYSTEM_PROMPT}\nUser: {user_input}\nRAVEN:"
+# ===========================================================================
+# FEATURE 3 — Generation Function
+# ===========================================================================
 
+def generate_response(user_input, model, tokenizer, history,
+                      temperature, top_k, top_p,
+                      repetition_penalty):
+    """
+    Build prompt from system prompt + history + user input,
+    run model.generate(), decode and clean the output.
+    """
+    # --- Build the prompt ---
+    recent_history = history[-PROMPT_HISTORY_DEPTH:]
+    history_block = "\n".join(recent_history) if recent_history else ""
 
-def encode_prompt(prompt, tokenizer):
-    ids = tokenizer.encode(prompt, add_bos=True)
-    if not ids:
-        return None
-    return ids[-config.block_size :]
+    if history_block:
+        prompt = f"{SYSTEM_PROMPT}\n{history_block}\nUser: {user_input}\nRAVEN:"
+    else:
+        prompt = f"{SYSTEM_PROMPT}\nUser: {user_input}\nRAVEN:"
 
+    # --- Encode and crop from the LEFT to fit block_size ---
+    encoded = tokenizer.encode(prompt, add_bos=True)
+    if not encoded:
+        return random.choice(FALLBACK_RESPONSES)
 
-def decode_tokens(tokenizer, tokens):
-    if isinstance(tokens, torch.Tensor):
-        tokens = tokens.tolist()
-    return tokenizer.decode(tokens)
+    # Keep most recent tokens if prompt exceeds block_size
+    if len(encoded) > config.block_size:
+        encoded = encoded[-config.block_size:]
 
-
-def trim_response(text):
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    if "RAVEN:" in text:
-        text = text.split("RAVEN:", 1)[-1]
-
-    for marker in ("\nUser:", "User:", "\nSYSTEM:", "SYSTEM:", "\n[END SYSTEM]", "[END SYSTEM]", "<eos>"):
-        if marker in text:
-            text = text.split(marker, 1)[0]
-
-    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-    return "\n".join(lines[:MAX_RESPONSE_LINES]).strip()
-
-
-def generate_response(user_input, model, tokenizer, history, settings):
-    prompt = build_prompt(user_input, history)
-    encoded = encode_prompt(prompt, tokenizer)
-    if encoded is None:
-        return None
-
+    # --- Prepare tensor ---
     idx = torch.tensor([encoded], dtype=torch.long, device=config.device)
     prompt_len = idx.size(1)
 
+    # --- Generate ---
     with torch.no_grad():
         generated = model.generate(
             idx,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=settings["temperature"],
-            top_k=settings["top_k"],
-            top_p=settings["top_p"],
-            repetition_penalty=1.15,
-            repetition_window=min(96, config.block_size),
-            stop_tokens=[tokenizer.eos_id],
-            stop_strings=["\nUser:", "User:", "\n\nUser:"],
+            max_new_tokens=120,
+            min_new_tokens=10,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            repetition_window=60,
+            stop_strings=["User:", "RAVEN:", "[SYSTEM]"],
             tokenizer=tokenizer,
-            min_new_tokens=1,
+            stop_tokens=[tokenizer.eos_id],
         )
 
-    response = trim_response(decode_tokens(tokenizer, generated[0, prompt_len:]))
-    if not response:
-        response = trim_response(decode_tokens(tokenizer, generated[0]))
-    return response
+    # --- Decode only the NEW tokens ---
+    new_tokens = generated[0, prompt_len:].tolist()
+    raw_text = tokenizer.decode(new_tokens)
 
+    # --- Clean the output ---
+    text = raw_text.strip()
+
+    # Truncate at any stop marker that bled into the decoded output
+    for marker in ("User:", "RAVEN:", "[SYSTEM]", "[END SYSTEM]"):
+        idx_pos = text.find(marker)
+        if idx_pos != -1:
+            text = text[:idx_pos]
+
+    text = text.strip()
+
+    # Split into lines, remove blanks
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    # Remove lines longer than 80 characters
+    lines = [line for line in lines if len(line) <= MAX_LINE_LENGTH]
+
+    # Keep maximum 4 lines
+    lines = lines[:MAX_RESPONSE_LINES]
+
+    # If nothing usable remains, use fallback
+    if len(lines) < 1:
+        return random.choice(FALLBACK_RESPONSES)
+
+    return "\n".join(lines)
+
+
+# ===========================================================================
+# FEATURE 4 — Typing Effect
+# ===========================================================================
 
 def print_response(response):
-    response = trim_response(response)
-    if not response:
-        response = random.choice(EMPTY_RESPONSES)
-
+    """Print RAVEN's response with a typing delay per line."""
     print("RAVEN:")
     for line in response.splitlines()[:MAX_RESPONSE_LINES]:
-        sleep_print(line, LINE_DELAY)
+        print(line)
+        time.sleep(LINE_DELAY)
     print()
-    return response
 
+
+# ===========================================================================
+# FEATURE 5 — Conversation History
+# ===========================================================================
+
+def update_history(history, user_input, response):
+    """Append a turn and trim to HISTORY_DEPTH."""
+    turn = f"User: {user_input}\nRAVEN:\n{response}"
+    history.append(turn)
+    # Keep only the last HISTORY_DEPTH turns
+    del history[:-HISTORY_DEPTH]
+
+
+# ===========================================================================
+# FEATURE 6 — Mood Modes
+# ===========================================================================
+
+def handle_mode(parts, state):
+    """Switch mood mode. Returns True if handled."""
+    if len(parts) != 2 or parts[1].lower() not in MODES:
+        print("[Unknown mode. Type /help]")
+        return
+    mode_name = parts[1].lower()
+    state["mode"] = mode_name
+    state["temperature"] = MODES[mode_name]["temperature"]
+    state["top_k"] = MODES[mode_name]["top_k"]
+    state["top_p"] = MODES[mode_name]["top_p"]
+    print(f"[MODE: {mode_name.upper()} ACTIVATED]")
+
+
+# ===========================================================================
+# FEATURE 7 — Slash Commands
+# ===========================================================================
 
 def print_help():
-    print("Commands:")
-    print("  /help              Show commands")
-    print("  /clear             Clear terminal")
-    print("  /status            Show runtime status")
-    print("  /exit              Disconnect")
-    print("")
-    print("Modes:")
-    for name, settings in MODES.items():
-        print(
-            f"  /mode {name:<11} "
-            f"temperature={settings['temperature']} "
-            f"top_k={settings['top_k']} "
-            f"top_p={settings['top_p']}"
-        )
+    """Print available commands."""
+    print("  Commands:")
+    print("  /mode default|savage|philosopher|chaos|nox|durden")
+    print("  /status")
+    print("  /clear")
+    print("  /reset")
+    print("  /exit")
     print()
 
 
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
-
-
-def print_status(mode_name, total_params):
-    settings = MODES[mode_name]
-    print(f"Mode: {mode_name.upper()}")
-    print(f"Temperature: {settings['temperature']}")
-    print(f"Top-k: {settings['top_k']}")
-    print(f"Top-p: {settings['top_p']}")
-    print(f"Parameters: {total_params:,}")
-    print(f"Device: {config.device}")
+def print_status(state, total_params):
+    """Print current runtime status."""
+    print(f"  Mode: {state['mode'].upper()}")
+    print(f"  Temperature: {state['temperature']}")
+    print(f"  Top-K: {state['top_k']}")
+    print(f"  Top-P: {state['top_p']}")
+    print(f"  Parameters: {total_params:,}")
+    print(f"  Device: {config.device}")
     print()
 
 
-def handle_command(command, state, total_params):
-    parts = command.strip().split()
-    name = parts[0].lower()
+def handle_command(user_input, state, history, total_params):
+    """
+    Process slash commands. Returns:
+      True  — command handled, continue loop
+      False — exit requested
+    """
+    parts = user_input.strip().split()
+    cmd = parts[0].lower()
 
-    if name == "/help":
+    if cmd == "/help":
         print_help()
         return True
-    if name == "/clear":
-        clear_screen()
-        return True
-    if name == "/status":
-        print_status(state["mode"], total_params)
-        return True
-    if name == "/exit":
-        print("RAVEN: Leaving already.")
-        return False
-    if name == "/mode":
-        if len(parts) != 2 or parts[1].lower() not in MODES:
-            print("[RAVEN: Unknown mode. Type /help.]")
-            return True
-        state["mode"] = parts[1].lower()
-        print(f"[MODE: {state['mode'].upper()}]")
+
+    if cmd == "/status":
+        print_status(state, total_params)
         return True
 
-    print("[RAVEN: Unknown command. Type /help.]")
+    if cmd == "/clear":
+        os.system("clear")
+        return True
+
+    if cmd == "/reset":
+        history.clear()
+        print("[CONVERSATION RESET]")
+        print()
+        return True
+
+    if cmd == "/exit":
+        print("RAVEN: Leaving already.")
+        print("       Pattern recognized.")
+        sys.exit(0)
+
+    if cmd == "/mode":
+        handle_mode(parts, state)
+        return True
+
+    # Unknown command
+    print("[Unknown command. Type /help]")
     return True
 
 
+# ===========================================================================
+# FEATURE 9 — Input Validation
+# ===========================================================================
+
+def validate_input(user_input):
+    """
+    Pre-process user input:
+    - Truncate to MAX_INPUT_LENGTH
+    - Prepend "Calculate: " for pure math expressions
+    - Append " RAVEN." for single-word greetings
+    """
+    # Truncate long input
+    if len(user_input) > MAX_INPUT_LENGTH:
+        user_input = user_input[:MAX_INPUT_LENGTH]
+
+    # Detect math-only input (digits, operators, spaces, parens, dots)
+    if MATH_PATTERN.match(user_input):
+        user_input = f"Calculate: {user_input}"
+
+    # Detect single-word greetings
+    if user_input.lower().strip() in GREETINGS:
+        user_input = f"{user_input} RAVEN."
+
+    return user_input
+
+
+# ===========================================================================
+# FEATURE 8 — Input Loop
+# ===========================================================================
+
 def input_loop(model, tokenizer, total_params):
+    """Main REPL loop — reads input, generates responses, handles commands."""
     history = []
-    state = {"mode": "default"}
+    state = {
+        "mode": "default",
+        "temperature": MODES["default"]["temperature"],
+        "top_k": MODES["default"]["top_k"],
+        "top_p": MODES["default"]["top_p"],
+    }
+    repetition_penalty = 1.35
 
     while True:
         try:
+            # Print prompt without newline, read input
             user_input = input("You: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nRAVEN: Disconnected.")
-            break
+            print("       The patterns remain.")
+            sys.exit(0)
 
+        # Skip empty input
         if not user_input:
             continue
 
+        # Handle slash commands
         if user_input.startswith("/"):
-            if not handle_command(user_input, state, total_params):
+            if not handle_command(user_input, state, history, total_params):
                 break
             continue
 
-        response = generate_response(user_input, model, tokenizer, history, MODES[state["mode"]])
-        if response is None:
-            print("[RAVEN: Input could not be encoded.]")
-            continue
+        # Validate and preprocess input
+        user_input = validate_input(user_input)
 
-        response = print_response(response)
-        history.append(f"User: {user_input}\nRAVEN: {response}")
-        del history[:-HISTORY_TURNS]
+        # Generate response — never crash
+        try:
+            response = generate_response(
+                user_input, model, tokenizer, history,
+                temperature=state["temperature"],
+                top_k=state["top_k"],
+                top_p=state["top_p"],
+                repetition_penalty=repetition_penalty,
+            )
+        except Exception:
+            response = random.choice(FALLBACK_RESPONSES)
 
+        # Print with typing effect
+        print_response(response)
+
+        # Update conversation history
+        update_history(history, user_input, response)
+
+
+# ===========================================================================
+# Entry Point
+# ===========================================================================
 
 def main():
+    """Boot RAVEN, load model, enter conversation loop."""
     boot_sequence()
     model, tokenizer, total_params = load_runtime()
     if model is None or tokenizer is None:
-        return
+        sys.exit(1)
     input_loop(model, tokenizer, total_params)
 
 
