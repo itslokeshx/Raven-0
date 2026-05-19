@@ -70,6 +70,26 @@ FALLBACK_RESPONSES = [
 # Single-word greetings to detect
 GREETINGS = {"hi", "hello", "hey", "sup", "yo"}
 
+# Science keywords — if input contains these, prepend "Explain: "
+SCIENCE_KEYWORDS = {
+    "gravity", "light", "energy", "atom", "electron", "photon",
+    "quantum", "evolution", "dna", "cell", "planet", "star",
+    "black hole", "magnetism", "electricity", "radiation",
+    "thermodynamics", "entropy", "relativity", "velocity",
+    "acceleration", "force", "mass", "wave", "frequency",
+    "molecule", "chemical", "reaction", "nucleus", "proton",
+    "neutron", "solar", "lunar", "orbit", "galaxy", "universe",
+    "biology", "physics", "chemistry", "neuron", "synapse",
+    "photosynthesis", "mitosis", "osmosis", "diffusion",
+}
+
+# Math keywords — natural language math questions
+MATH_KEYWORDS = {
+    "plus", "minus", "times", "divide", "multiply", "sum",
+    "subtract", "add", "square root", "percentage", "percent",
+    "factorial", "power of", "squared", "cubed", "average",
+}
+
 # Max lines in a response
 MAX_RESPONSE_LINES = 4
 
@@ -424,19 +444,30 @@ def validate_input(user_input):
     """
     Pre-process user input:
     - Truncate to MAX_INPUT_LENGTH
-    - Prepend "Calculate: " for pure math expressions
+    - Prepend "Calculate: " for pure math expressions or math keyword questions
+    - Prepend "Explain: " for science keyword questions
     - Append " RAVEN." for single-word greetings
     """
     # Truncate long input
     if len(user_input) > MAX_INPUT_LENGTH:
         user_input = user_input[:MAX_INPUT_LENGTH]
 
+    lower = user_input.lower().strip()
+
     # Detect math-only input (digits, operators, spaces, parens, dots)
     if MATH_PATTERN.match(user_input):
         user_input = f"Calculate: {user_input}"
 
+    # Detect natural-language math questions ("what is 5 plus 3")
+    elif any(kw in lower for kw in MATH_KEYWORDS):
+        user_input = f"Calculate: {user_input}"
+
+    # Detect science questions by keyword presence
+    elif any(kw in lower for kw in SCIENCE_KEYWORDS):
+        user_input = f"Explain: {user_input}"
+
     # Detect single-word greetings
-    if user_input.lower().strip() in GREETINGS:
+    elif lower in GREETINGS:
         user_input = f"{user_input} RAVEN."
 
     return user_input
