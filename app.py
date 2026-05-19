@@ -150,7 +150,8 @@ def generate(user_input, history, mode):
                 "You could have used a calculator.",
             ]
             response = "\n".join(lines)
-            history.append((user_input, response))
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": response})
             return "", history
         except:
             pass
@@ -180,7 +181,8 @@ def generate(user_input, history, mode):
 
     for keyword, answer in science_answers.items():
         if keyword in clean:
-            history.append((user_input, answer))
+            history.append({"role": "user", "content": user_input})
+            history.append({"role": "assistant", "content": answer})
             return "", history
 
     # Percentage calculator
@@ -190,7 +192,8 @@ def generate(user_input, history, mode):
         num = float(pct_match.group(2))
         result = round(pct / 100 * num, 4)
         response = f"{num} × {pct/100} = {result}\nThe answer is {result}.\nYour calculator was right there."
-        history.append((user_input, response))
+        history.append({"role": "user", "content": user_input})
+        history.append({"role": "assistant", "content": response})
         return "", history
 
     mode_settings = {
@@ -203,10 +206,24 @@ def generate(user_input, history, mode):
     }
     temp, top_k, top_p = mode_settings.get(mode, (0.72, 30, 0.85))
 
-    # Build context from last 2 turns
+    # Build context from last 2 turns (messages format: list of {role, content} dicts)
     history_text = ""
-    for turn in history[-2:]:
-        history_text += f"User: {turn[0]}\nRAVEN:\n{turn[1]}\n\n"
+    pairs = []
+    i = 0
+    while i < len(history):
+        if history[i].get("role") == "user":
+            user_msg = history[i].get("content", "")
+            asst_msg = ""
+            if i + 1 < len(history) and history[i + 1].get("role") == "assistant":
+                asst_msg = history[i + 1].get("content", "")
+                i += 2
+            else:
+                i += 1
+            pairs.append((user_msg, asst_msg))
+        else:
+            i += 1
+    for u, a in pairs[-2:]:
+        history_text += f"User: {u}\nRAVEN:\n{a}\n\n"
 
     prompt = f"{SYSTEM_PROMPT}{history_text}User: {user_input}\nRAVEN:\n"
 
@@ -267,7 +284,8 @@ def generate(user_input, history, mode):
     except Exception as e:
         response = "..."
 
-    history.append((user_input, response))
+    history.append({"role": "user", "content": user_input})
+    history.append({"role": "assistant", "content": response})
     return "", history
 
 
