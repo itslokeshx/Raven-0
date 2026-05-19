@@ -1,2 +1,2 @@
-torch
-tokenizers
+torch>=2.0
+tokenizers>=0.15

@@ -1,12 +1,12 @@
 # RAVEN Corpus Parts
 
-Place clean source files here, then run:
+Place clean UTF-8 `.txt` source files here, then run:
 
 ```bash
 python3 raven/data/build_corpus.py
 ```
 
-Expected files:
+Expected filenames:
 
 - `raven_dialogue.txt`
 - `psychology.txt`
@@ -14,5 +14,5 @@ Expected files:
 - `math_science_facts.txt`
 - `philosophy.txt`
 
-The assembler keeps RAVEN dialogue dominant and writes the final training file to
-`raven/data/corpus.txt`.
+`build_corpus.py` streams each file into `raven/data/corpus.txt` using the
+configured mix, so it does not need to hold the assembled corpus in RAM.

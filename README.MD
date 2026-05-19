@@ -1,200 +1,149 @@
 # RAVEN
 
-> Not an assistant. A presence.
+RAVEN is a tiny character-driven language model built from scratch with PyTorch.
+The target voice is dark, sarcastic, psychologically sharp, and concise.
 
-RAVEN is a small language model project built from scratch with PyTorch. It is trained to speak as a sharp, sarcastic, psychologically observant, cinematic system: calm, dark, direct, and never corporate.
+## Target
 
-This repo is currently aimed at a **30M parameter local model** trained on a RAVEN-heavy dataset using a small byte-level BPE tokenizer.
-
----
-
-## Current Target
-
-| Area | Current Setting |
+| Setting | Value |
 | --- | --- |
-| Model size | ~30M parameters |
-| Tokenizer | Byte-level BPE |
-| Vocabulary | 8,192 tokens |
-| Context window | 256 tokens |
-| Embedding size | 512 |
+| Parameters | about 30M |
+| Tokenizer | HuggingFace byte-level BPE |
+| Vocabulary | 8,192 |
+| Context | 256 tokens |
+| Embedding | 512 |
+| Heads | 8 |
 | Layers | 8 |
-| Attention heads | 8 |
-| Training target | Google Colab Tesla T4 |
-| Checkpoint safety | Latest + best checkpoints |
+| Dropout | 0.1 |
+| Training target | Google Colab free tier T4 |
 
-RAVEN is not using pretrained weights. The model, tokenizer, trainer, and chat runtime are part of this codebase.
+The model uses tied token embedding and language-model head weights.
 
----
-
-## Project Structure
+## Files
 
 ```text
 raven/
-├── config.py
-├── main.py
-├── core/
-│   ├── model.py
-│   ├── tokenizer.py
-│   └── trainer.py
-├── data/
-│   ├── books/              # local raw dataset parts, ignored by git
-│   ├── parts/              # optional curated parts, .txt ignored by git
-│   ├── build_corpus.py
-│   └── corpus.txt          # final training corpus, ignored by git
-└── personality/
-    └── system_prompt.py
+  config.py
+  main.py
+  core/
+    model.py
+    tokenizer.py
+    trainer.py
+  data/
+    build_corpus.py
+    corpus.txt
+    parts/
+  personality/
+    system_prompt.py
 ```
 
-Generated training artifacts are also ignored by git:
+Generated artifacts are not committed:
 
-- `raven/raven_weights.pt`
-- `raven/raven_tokenizer.json`
-- `raven/raven_checkpoint_latest.pt`
-- `raven/raven_checkpoint_best.pt`
-- `raven/raven_tokens.pt`
+- `raven_tokenizer.json`
+- `raven_tokens.pt`
+- `raven_weights.pt`
+- `raven_checkpoint_latest.pt`
+- `raven_checkpoint_best.pt`
 
-Do not commit datasets, weights, token caches, or checkpoints. GitHub rejects files over 100 MB, and model/data files belong in Drive or local storage.
-
----
-
-## Local Setup
-
-Create and activate a virtual environment:
+## Install
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Check the code imports:
+On Colab, choose `Runtime -> Change runtime type -> T4 GPU`.
 
-```bash
-python3 -m py_compile raven/config.py raven/core/model.py raven/core/tokenizer.py raven/core/trainer.py raven/main.py
+## Checkpoint Location
+
+The trainer saves tokenizer, token cache, weights, and checkpoints to:
+
+```text
+/content/drive/MyDrive/raven_checkpoints/
 ```
 
----
+If Google Drive is not mounted or is not writable, it falls back to:
+
+```text
+/content/raven/
+```
+
+For local development, set `RAVEN_CHECKPOINT_DIR` if you want another artifact
+directory.
 
 ## Dataset
 
-The trainer reads one file:
+The trainer reads:
 
 ```text
 raven/data/corpus.txt
 ```
 
-If you already have many `.txt` files inside `raven/data/books/`, combine them into the final corpus:
+You can assemble it from curated parts:
 
 ```bash
-output="raven/data/raven-1-dataset.txt"
-: > "$output"
-while IFS= read -r -d '' file; do
-  printf '\n\n' >> "$output"
-  cat "$file" >> "$output"
-  printf '\n' >> "$output"
-done < <(find raven/data/books -maxdepth 1 -type f -name '*.txt' -print0 | sort -z)
-
-ln -f raven/data/raven-1-dataset.txt raven/data/corpus.txt
+python3 raven/data/build_corpus.py
 ```
 
-That makes `corpus.txt` point to the same data without wasting another copy of disk space.
-
-For the best RAVEN behavior, keep the dataset weighted toward:
-
-| Data Type | Target Share |
-| --- | ---: |
-| RAVEN dialogue | 60% |
-| Psychology / behavior observations | 10% |
-| Dark humor / sarcasm | 10% |
-| Basic math, science, and facts | 15% |
-| Philosophy | 5% |
-
-Clean data matters more than raw size. A smaller sharp corpus will beat a huge noisy one.
-
----
-
-## Colab Training
-
-Use a GPU runtime:
-
-```text
-Runtime -> Change runtime type -> T4 GPU
-```
-
-Mount Google Drive:
-
-```python
-from google.colab import drive
-drive.mount("/content/drive")
-```
-
-Clone the repo:
-
-```bash
-git clone https://github.com/itslokeshx/Raven.git
-cd Raven
-pip install -r requirements.txt
-```
-
-Upload or copy your corpus to:
+For Colab, copy or upload your final corpus to:
 
 ```text
 Raven/raven/data/corpus.txt
 ```
 
-Start training:
+## Train
 
 ```bash
 cd raven
 python3 core/trainer.py
 ```
 
-When Drive is mounted, checkpoints save automatically to:
+Training behavior:
 
-```text
-/content/drive/MyDrive/raven_checkpoints/
+- trains or loads `raven_tokenizer.json`
+- encodes the corpus in 5MB byte chunks
+- saves `raven_tokens.pt` and reuses it on later runs
+- invalidates the token cache when corpus size or modification time changes
+- uses AMP on CUDA and full precision on CPU
+- uses batch size 16 with gradient accumulation 4
+- uses warmup plus cosine learning-rate decay
+- clips gradients at 1.0
+- writes atomic latest checkpoints for resume safety
+
+By default, `raven_checkpoint_latest.pt` is saved after every optimizer step.
+This is the safest resume mode. To reduce Drive writes, set:
+
+```bash
+export RAVEN_SAVE_EVERY_STEP=0
 ```
 
-The important files are:
+Then the trainer still saves at `checkpoint_interval`, at best validation loss,
+on clean interrupt, and on exceptions.
 
-| File | Purpose |
-| --- | --- |
-| `raven_tokenizer.json` | BPE tokenizer used by training and chat |
-| `raven_weights.pt` | latest model weights for `main.py` |
-| `raven_checkpoint_latest.pt` | resumable training checkpoint |
-| `raven_checkpoint_best.pt` | best validation checkpoint |
-| `raven_tokens.pt` | cached tokenized corpus |
+## Resume
 
-If Colab disconnects, run the same trainer command again. It will resume from `raven_checkpoint_latest.pt` when that file exists.
+Run the same command again:
 
----
-
-## Run RAVEN Locally
-
-After training, place these files in `raven/` or keep them in the configured checkpoint directory:
-
-```text
-raven/raven_tokenizer.json
-raven/raven_weights.pt
+```bash
+cd raven
+python3 core/trainer.py
 ```
 
-Run:
+If `raven_checkpoint_latest.pt` exists, optimizer state, AMP scaler state, model
+state, Python RNG state, and PyTorch RNG state are restored.
+
+## Chat
+
+After training:
 
 ```bash
 cd raven
 python3 main.py
 ```
 
-The chat runtime includes:
+`main.py` loads `raven_weights.pt` when available. If weights are missing, it can
+load the model state from `raven_checkpoint_latest.pt`.
 
-- cinematic boot sequence
-- mode commands
-- 3-turn short-term conversation history
-- temperature and top-k sampling
-- response trimming to keep replies short
-- graceful `/exit` and Ctrl+C handling
-
-Useful commands:
+Commands:
 
 ```text
 /help
@@ -209,63 +158,26 @@ Useful commands:
 /exit
 ```
 
----
-
-## Training Notes
-
-Current config is tuned for a T4:
-
-```text
-batch_size = 16
-gradient_accumulation_steps = 4
-effective batch = 64
-max_iters = 15000
-learning_rate = 5e-4
-eval_interval = 500
-checkpoint_interval = 500
-```
-
-If Colab runs out of memory, lower `batch_size` to `8` and raise `gradient_accumulation_steps` to `8`.
-
-If training is too slow, reduce `max_iters` for a test run first. Do not judge model quality from a tiny test run; use it only to verify the pipeline.
-
----
-
-## Git Hygiene
-
-Before pushing, check that no dataset or model files are staged:
+## Quick Checks
 
 ```bash
-git status --short
-git diff --cached --name-only
+python3 -m py_compile \
+  raven/config.py \
+  raven/core/model.py \
+  raven/core/tokenizer.py \
+  raven/core/trainer.py \
+  raven/main.py \
+  raven/data/build_corpus.py \
+  raven/personality/system_prompt.py
 ```
-
-If a large data file is staged, unstage it:
 
 ```bash
-git restore --staged raven/data/corpus.txt
-git restore --staged raven/data/books/
-git restore --staged raven/*.pt
-git restore --staged raven/*.json
+cd raven
+python3 - <<'PY'
+import config
+from core.model import RavenModel
+
+model = RavenModel()
+print(model.get_num_params())
+PY
 ```
-
-Keep code in Git. Keep data and weights outside Git.
-
----
-
-## Next Steps
-
-1. Finish cleaning the dataset mix so RAVEN dialogue dominates.
-2. Train the 30M BPE model on Colab T4.
-3. Download or copy `raven_tokenizer.json` and `raven_weights.pt`.
-4. Run `python3 main.py` locally and test the mood modes.
-5. Save good sample conversations and use them to improve the next dataset.
-6. For v2.1, add a small evaluation script for prompt quality, repetition, and format drift.
-
----
-
-## Scope
-
-RAVEN is currently a local text-generation model. It has no web access, no tools, no memory database, no voice, and no external API dependency.
-
-The goal is simple: build a small model from scratch that speaks with a distinct identity and can be understood at every layer of the stack.

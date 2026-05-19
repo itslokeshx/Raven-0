@@ -1,70 +1,73 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-import config
+try:
+    import config
+except ModuleNotFoundError:
+    from raven import config
 
-class Head(nn.Module):
-    """
-    A single self-attention head.
-    This is where the model looks at other characters in the sequence to gather context.
-    """
-    def __init__(self, head_size):
+
+class CausalSelfAttention(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.key = nn.Linear(config.n_embd, head_size, bias=False)
-        self.query = nn.Linear(config.n_embd, head_size, bias=False)
-        self.value = nn.Linear(config.n_embd, head_size, bias=False)
-        # tril is a lower triangular matrix used to mask future tokens (so the model can't cheat and look ahead)
-        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
-        self.dropout = nn.Dropout(config.dropout)
+        if config.n_embd % config.n_head != 0:
+            raise ValueError("n_embd must be divisible by n_head.")
+
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
+        self.dropout = config.dropout
+
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.register_buffer(
+            "bias",
+            torch.tril(torch.ones(config.block_size, config.block_size)).view(
+                1, 1, config.block_size, config.block_size
+            ),
+            persistent=False,
+        )
 
     def forward(self, x):
-        B, T, C = x.shape
-        k = self.key(x)   # (B, T, head_size)
-        q = self.query(x) # (B, T, head_size)
+        batch_size, seq_len, channels = x.size()
 
-        # Compute attention scores ("affinities")
-        head_size = k.shape[-1]
-        wei = q @ k.transpose(-2, -1) * (head_size ** -0.5) # (B, T, T)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)
-        wei = self.dropout(wei)
-        
-        # Aggregate the values
-        v = self.value(x) # (B, T, head_size)
-        out = wei @ v # (B, T, head_size)
-        return out
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
 
+        if hasattr(F, "scaled_dot_product_attention"):
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+        else:
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(self.head_dim))
+            att = att.masked_fill(self.bias[:, :, :seq_len, :seq_len] == 0, float("-inf"))
+            att = F.softmax(att, dim=-1)
+            att = self.attn_dropout(att)
+            y = att @ v
 
-class MultiHeadAttention(nn.Module):
-    """
-    Multiple self-attention heads running in parallel.
-    This allows the model to focus on different types of context simultaneously.
-    """
-    def __init__(self, num_heads, head_size):
-        super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(config.n_embd, config.n_embd)
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        # Concatenate the outputs from all heads along the last dimension
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.dropout(self.proj(out))
-        return out
+        y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, channels)
+        return self.resid_dropout(self.c_proj(y))
 
 
 class FeedForward(nn.Module):
-    """
-    A simple linear layer followed by a non-linearity (MLP).
-    This gives the model time to "think" about what it learned from the attention mechanism.
-    """
-    def __init__(self, n_embd):
+    def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd),
-            nn.ReLU(),
-            nn.Linear(4 * n_embd, n_embd),
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
             nn.Dropout(config.dropout),
         )
 
@@ -73,158 +76,185 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    """
-    A single transformer block combining attention and feed-forward layers.
-    Includes residual connections (adding the input to the output) and layer normalization to stabilize training.
-    """
-    def __init__(self, n_embd, n_head):
+    def __init__(self):
         super().__init__()
-        head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size)
-        self.ffwd = FeedForward(n_embd)
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
+        self.ln_1 = nn.LayerNorm(config.n_embd)
+        self.attn = CausalSelfAttention()
+        self.ln_2 = nn.LayerNorm(config.n_embd)
+        self.mlp = FeedForward()
 
     def forward(self, x):
-        # Residual connections: x + layer(...)
-        # We apply layer norm BEFORE the attention and feed-forward (pre-norm formulation)
-        x = x + self.sa(self.ln1(x))
-        x = x + self.ffwd(self.ln2(x))
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
 
 
 class RavenModel(nn.Module):
-    """
-    The full RAVEN language model.
-    Combines character embeddings, positional embeddings, transformer blocks, and the final output layer.
-    """
     def __init__(self):
         super().__init__()
-        # Each token directly reads off the logits for the next token from a lookup table
+        self.block_size = config.block_size
+        self.vocab_size = config.vocab_size
+
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
-        
-        # Create n_layer transformer blocks
-        self.blocks = nn.Sequential(*[TransformerBlock(config.n_embd, config.n_head) for _ in range(config.n_layer)])
-        
-        # Final layer norm
+        self.drop = nn.Dropout(config.dropout)
+        self.blocks = nn.ModuleList([TransformerBlock() for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
-
-        # Final linear layer to output the next token probabilities (logits)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        self.apply(self._init_weights)
+        for name, param in self.named_parameters():
+            if name.endswith("c_proj.weight"):
+                nn.init.normal_(param, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
         self.lm_head.weight = self.token_embedding_table.weight
 
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
     def get_num_params(self):
-        return sum(p.numel() for p in self.parameters())
+        return sum(param.numel() for param in self.parameters() if param.requires_grad)
 
     def forward(self, idx, targets=None):
-        B, T = idx.shape
+        batch_size, seq_len = idx.size()
+        if seq_len > self.block_size:
+            raise ValueError(f"Sequence length {seq_len} exceeds block_size {self.block_size}.")
 
-        # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B, T, C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T, C)
-        
-        # Add token and position embeddings together
-        x = tok_emb + pos_emb # (B, T, C)
-        
-        # Pass through the transformer blocks
-        x = self.blocks(x) # (B, T, C)
-        x = self.ln_f(x) # (B, T, C)
-        
-        # Get final logits
-        logits = self.lm_head(x) # (B, T, vocab_size)
+        positions = torch.arange(0, seq_len, dtype=torch.long, device=idx.device)
+        tok_emb = self.token_embedding_table(idx)
+        pos_emb = self.position_embedding_table(positions)
+        x = self.drop(tok_emb + pos_emb)
 
-        if targets is None:
-            loss = None
-        else:
-            B, T, C = logits.shape
-            logits = logits.reshape(B*T, C)
-            targets = targets.reshape(B*T)
-            loss = F.cross_entropy(logits, targets)
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.reshape(batch_size * seq_len, logits.size(-1)),
+                targets.reshape(batch_size * seq_len),
+            )
 
         return logits, loss
+
+    @staticmethod
+    def _apply_repetition_penalty(logits, generated, penalty, window):
+        if penalty is None or penalty == 1.0:
+            return logits
+
+        for row in range(logits.size(0)):
+            recent = generated[row, -window:].tolist()
+            for token_id in set(recent):
+                if token_id < 0 or token_id >= logits.size(-1):
+                    continue
+                if logits[row, token_id] > 0:
+                    logits[row, token_id] /= penalty
+                else:
+                    logits[row, token_id] *= penalty
+        return logits
+
+    @staticmethod
+    def _filter_logits(logits, top_k=None, top_p=None):
+        if top_k is not None and top_k > 0:
+            k = min(int(top_k), logits.size(-1))
+            values, _ = torch.topk(logits, k)
+            cutoff = values[:, -1].unsqueeze(-1)
+            logits = logits.masked_fill(logits < cutoff, float("-inf"))
+
+        if top_p is not None and 0.0 < top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            sorted_probs = F.softmax(sorted_logits, dim=-1)
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+            remove_sorted = cumulative_probs > top_p
+            remove_sorted[:, 1:] = remove_sorted[:, :-1].clone()
+            remove_sorted[:, 0] = False
+
+            remove = torch.zeros_like(logits, dtype=torch.bool)
+            remove.scatter_(1, sorted_indices, remove_sorted)
+            logits = logits.masked_fill(remove, float("-inf"))
+
+        return logits
+
+    @staticmethod
+    def _safe_probs(logits):
+        probs = F.softmax(logits, dim=-1)
+        probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+        row_sums = probs.sum(dim=-1, keepdim=True)
+        bad_rows = row_sums.squeeze(-1) <= 0
+        if bad_rows.any():
+            probs[bad_rows] = 1.0 / probs.size(-1)
+            row_sums = probs.sum(dim=-1, keepdim=True)
+        return probs / row_sums
 
     @torch.no_grad()
     def generate(
         self,
         idx,
         max_new_tokens=120,
-        temperature=0.65,
-        top_k=32,
-        top_p=0.88,
-        repetition_penalty=1.18,
-        repetition_window=80,
+        temperature=0.8,
+        top_k=40,
+        top_p=0.9,
+        repetition_penalty=1.15,
+        repetition_window=96,
         stop_tokens=None,
         stop_strings=None,
         tokenizer=None,
-        min_new_tokens=12,
+        min_new_tokens=1,
     ):
-        """
-        Controlled autoregressive generation for tiny character-level models.
-        Combines temperature, top-k, nucleus sampling, repetition penalty, and
-        stop conditions to reduce gibberish and repetition loops.
-        """
-        if idx.shape[0] != 1:
-            raise ValueError("generate() currently supports batch size 1 for stop-string handling.")
+        if idx.ndim != 2:
+            raise ValueError("generate() expects idx with shape (batch, sequence).")
+        if stop_strings and (tokenizer is None or idx.size(0) != 1):
+            raise ValueError("stop_strings require a tokenizer and batch size 1.")
 
+        was_training = self.training
         self.eval()
 
         stop_tokens = set(stop_tokens or [])
         stop_strings = stop_strings or []
-        original_len = idx.shape[1]
+        original_len = idx.size(1)
+        temperature = max(float(temperature), 1e-5)
+        repetition_window = max(1, int(repetition_window))
+        min_new_tokens = max(0, int(min_new_tokens))
 
-        for _ in range(max_new_tokens):
-            idx_cond = idx[:, -config.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :]
+        try:
+            for _ in range(int(max_new_tokens)):
+                idx_cond = idx[:, -self.block_size :]
+                logits, _ = self(idx_cond)
+                logits = logits[:, -1, :].float()
 
-            if repetition_penalty and repetition_penalty != 1.0:
-                recent_tokens = idx[0, -repetition_window:].tolist()
-                for token_id in set(recent_tokens):
-                    if logits[0, token_id] > 0:
-                        logits[0, token_id] /= repetition_penalty
-                    else:
-                        logits[0, token_id] *= repetition_penalty
+                logits = self._apply_repetition_penalty(
+                    logits,
+                    idx,
+                    repetition_penalty,
+                    min(repetition_window, idx.size(1)),
+                )
+                logits = logits / temperature
+                logits = self._filter_logits(logits, top_k=top_k, top_p=top_p)
+                probs = self._safe_probs(logits)
 
-            temperature = max(float(temperature), 1e-5)
-            logits = logits / temperature
+                idx_next = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, idx_next), dim=1)
 
-            if top_k is not None and top_k > 0:
-                k = min(top_k, logits.size(-1))
-                values, _ = torch.topk(logits, k)
-                cutoff = values[:, -1].unsqueeze(-1)
-                logits = logits.masked_fill(logits < cutoff, float("-inf"))
+                generated_len = idx.size(1) - original_len
+                if generated_len < min_new_tokens:
+                    continue
 
-            if top_p is not None and 0.0 < top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                sorted_probs = F.softmax(sorted_logits, dim=-1)
-                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
-                sorted_remove = cumulative_probs > top_p
-                sorted_remove[:, 1:] = sorted_remove[:, :-1].clone()
-                sorted_remove[:, 0] = False
-
-                remove = torch.zeros_like(logits, dtype=torch.bool)
-                remove.scatter_(1, sorted_indices, sorted_remove)
-                logits = logits.masked_fill(remove, float("-inf"))
-
-            probs = F.softmax(logits, dim=-1)
-            if torch.isnan(probs).any() or probs.sum() <= 0:
-                probs = torch.ones_like(probs) / probs.size(-1)
-
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
-
-            generated_len = idx.shape[1] - original_len
-            if generated_len < min_new_tokens:
-                continue
-
-            if idx_next.item() in stop_tokens:
-                break
-
-            if tokenizer is not None and stop_strings:
-                generated_text = tokenizer.decode(idx[0, original_len:].tolist())
-                if any(stop_string in generated_text for stop_string in stop_strings):
+                if stop_tokens and all(token.item() in stop_tokens for token in idx_next[:, 0]):
                     break
+
+                if stop_strings:
+                    text = tokenizer.decode(idx[0, original_len:].tolist())
+                    if any(stop_string in text for stop_string in stop_strings):
+                        break
+        finally:
+            self.train(was_training)
 
         return idx

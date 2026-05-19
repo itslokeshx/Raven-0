@@ -1,13 +1,13 @@
 import os
+import shutil
 from pathlib import Path
 
 
 DATA_DIR = Path(__file__).resolve().parent
 PARTS_DIR = DATA_DIR / "parts"
 OUTPUT_PATH = DATA_DIR / "corpus.txt"
+COPY_BUFFER_SIZE = 1024 * 1024
 
-# Keep the model RAVEN-first. These percentages are enforced by repetition
-# when source files are smaller than the requested mix.
 MIX = [
     ("raven_dialogue.txt", 60),
     ("psychology.txt", 10),
@@ -17,32 +17,38 @@ MIX = [
 ]
 
 
-def read_part(filename):
-    path = PARTS_DIR / filename
-    if not path.exists():
-        print(f"Missing {path}; skipping.")
-        return ""
-    return path.read_text(encoding="utf-8").strip()
+def append_text_file(source_path, output_handle):
+    with source_path.open("r", encoding="utf-8", errors="replace") as input_handle:
+        shutil.copyfileobj(input_handle, output_handle, length=COPY_BUFFER_SIZE)
+    output_handle.write("\n\n")
 
 
 def main():
     PARTS_DIR.mkdir(parents=True, exist_ok=True)
-    sections = []
 
+    available = []
     for filename, weight in MIX:
-        text = read_part(filename)
-        if not text:
+        path = PARTS_DIR / filename
+        if not path.exists():
+            print(f"Missing {path}; skipping.")
             continue
-        sections.extend([text] * weight)
+        if path.stat().st_size == 0:
+            print(f"Empty {path}; skipping.")
+            continue
+        available.append((path, weight))
 
-    if not sections:
+    if not available:
         raise SystemExit(
             f"No corpus parts found in {PARTS_DIR}.\n"
             "Add raven_dialogue.txt, psychology.txt, dark_humor.txt, "
             "math_science_facts.txt, and philosophy.txt."
         )
 
-    OUTPUT_PATH.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    with OUTPUT_PATH.open("w", encoding="utf-8") as output_handle:
+        for path, weight in available:
+            for _ in range(weight):
+                append_text_file(path, output_handle)
+
     size_mb = os.path.getsize(OUTPUT_PATH) / 1024 / 1024
     print(f"Built {OUTPUT_PATH}")
     print(f"Size: {size_mb:.2f} MB")
