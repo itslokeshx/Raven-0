@@ -1,0 +1,343 @@
+RAVEN COLAB TRAINING, REFINEMENT, AND UI GUIDE
+==============================================
+
+Current target:
+- Model: about 30M parameters
+- Tokenizer: byte-level BPE
+- Vocab size: 8192
+- Context: 256 tokens
+- GPU target: Google Colab T4
+- Main training file expected by code: raven/data/corpus.txt
+- Checkpoint folder on Colab Drive: /content/drive/MyDrive/raven_checkpoints/
+
+
+PHASE 0 - BEFORE COLAB
+======================
+
+1. Keep code in GitHub.
+   Do not push datasets, checkpoints, token caches, or weights.
+
+2. Keep large data in Google Drive or local disk.
+   These files should NOT be committed:
+   - raven/data/corpus.txt
+   - raven/data/books/*.txt
+   - raven/*.pt
+   - raven/*.json model/tokenizer artifacts
+
+3. Final dataset target:
+   The trainer reads:
+
+   raven/data/corpus.txt
+
+4. Recommended data mix:
+   - 60% RAVEN dialogue
+   - 10% psychology / behavior observations
+   - 10% dark humor / sarcasm
+   - 15% basic math, science, and facts
+   - 5% philosophy
+
+5. Clean data beats huge dirty data.
+   If RAVEN starts sounding like old books, the corpus has too much book text.
+
+
+PHASE 1 - COLAB SETUP
+=====================
+
+1. Open Google Colab.
+
+2. Select GPU:
+
+   Runtime -> Change runtime type -> T4 GPU
+
+3. Confirm GPU:
+
+   !nvidia-smi
+
+4. Mount Google Drive:
+
+   from google.colab import drive
+   drive.mount("/content/drive")
+
+5. Clone repo:
+
+   !git clone https://github.com/itslokeshx/Raven.git
+   %cd Raven
+
+6. Install dependencies:
+
+   !pip install -r requirements.txt
+
+
+PHASE 2 - DATASET IN COLAB
+==========================
+
+Option A - You already have one big dataset file in Drive
+--------------------------------------------------------
+
+Example Drive path:
+
+   /content/drive/MyDrive/raven-1-dataset.txt
+
+Copy it into the path expected by the trainer:
+
+   !mkdir -p raven/data
+   !cp "/content/drive/MyDrive/raven-1-dataset.txt" raven/data/corpus.txt
+   !wc -c raven/data/corpus.txt
+
+Option B - You uploaded many part files into raven/data/books/
+-------------------------------------------------------------
+
+Combine them into corpus.txt:
+
+   !output="raven/data/corpus.txt"; \
+   : > "$output"; \
+   while IFS= read -r -d '' file; do \
+     printf '\n\n' >> "$output"; \
+     cat "$file" >> "$output"; \
+     printf '\n' >> "$output"; \
+   done < <(find raven/data/books -maxdepth 1 -type f -name '*.txt' -print0 | sort -z)
+
+Check size:
+
+   !ls -lh raven/data/corpus.txt
+   !wc -c raven/data/corpus.txt
+
+
+PHASE 3 - TRAINING
+==================
+
+Start training:
+
+   %cd /content/Raven/raven
+   !python3 core/trainer.py
+
+What should happen:
+- BPE tokenizer trains if raven_tokenizer.json is missing.
+- Corpus is encoded and cached as raven_tokens.pt.
+- Model initializes at about 30M parameters.
+- Training prints train/validation loss every 500 steps.
+- Latest checkpoint saves every 500 steps.
+- Best checkpoint saves when validation improves.
+
+Important saved files:
+
+   /content/drive/MyDrive/raven_checkpoints/raven_tokenizer.json
+   /content/drive/MyDrive/raven_checkpoints/raven_weights.pt
+   /content/drive/MyDrive/raven_checkpoints/raven_checkpoint_latest.pt
+   /content/drive/MyDrive/raven_checkpoints/raven_checkpoint_best.pt
+   /content/drive/MyDrive/raven_checkpoints/raven_tokens.pt
+
+If Colab disconnects:
+
+   from google.colab import drive
+   drive.mount("/content/drive")
+
+   %cd /content/Raven/raven
+   !python3 core/trainer.py
+
+The trainer resumes from raven_checkpoint_latest.pt automatically.
+
+
+PHASE 4 - AFTER TRAINING
+========================
+
+Download or copy these two files for local chat:
+
+   raven_tokenizer.json
+   raven_weights.pt
+
+Put them here locally:
+
+   Raven/raven/raven_tokenizer.json
+   Raven/raven/raven_weights.pt
+
+Then run:
+
+   cd raven
+   python3 main.py
+
+Test commands:
+
+   /status
+   /mode savage
+   /mode philosopher
+   /mode chaos
+   /mode nox
+   /mode durden
+   /exit
+
+
+PHASE 5 - QUALITY TESTING
+=========================
+
+Test with fixed prompts after every training run.
+
+Use prompts like:
+
+1. I wasted the whole day again.
+2. Help me focus for one hour.
+3. Why do I keep procrastinating?
+4. Tell me a dark joke.
+5. What is 15% of 240?
+6. Explain gravity in two lines.
+7. I feel like quitting.
+8. What should I do when I overthink?
+9. Give me one brutal truth.
+10. What is 12 x 8?
+
+Look for:
+- Does it stay in RAVEN voice?
+- Does it answer in 2-4 lines?
+- Does it avoid book-paragraph style?
+- Does it avoid repeating the same phrase?
+- Does it avoid generating fake "User:" turns?
+- Does it handle simple math patterns better than random guessing?
+
+Save bad outputs in a notes file.
+Every bad output tells you what the next dataset needs.
+
+
+PHASE 6 - REFINEMENT LOOP
+=========================
+
+Problem: RAVEN sounds like old books.
+Fix:
+- Reduce philosophy/book text.
+- Add more direct User/RAVEN dialogue.
+- Put RAVEN dialogue at the top of the corpus.
+
+Problem: RAVEN rambles.
+Fix:
+- Add more examples with 2-4 short lines.
+- Remove long essay-style answers.
+- Keep "RAVEN:" answers short in training data.
+
+Problem: RAVEN repeats phrases.
+Fix:
+- Deduplicate generated data.
+- Avoid copying the exact same Q/A hundreds of times.
+- Add more varied examples for the same intent.
+
+Problem: RAVEN loses personality during facts/math.
+Fix:
+- Format facts/math as User/RAVEN dialogue.
+- End factual answers with a short RAVEN-style line.
+- Keep explanations short.
+
+Problem: Math is wrong.
+Fix:
+- Keep expectations realistic.
+- Add simple arithmetic and percentage examples.
+- Use clean step-by-step patterns.
+- Do not expect real advanced reasoning from this scale.
+
+Problem: Training resumes when you wanted a fresh run.
+Fix:
+- Delete or move these Drive files:
+  - raven_checkpoint_latest.pt
+  - raven_checkpoint_best.pt
+  - raven_weights.pt
+  - raven_tokens.pt
+
+Problem: You changed the corpus heavily and want a new tokenizer.
+Fix:
+- Also delete:
+  - raven_tokenizer.json
+
+Then rerun trainer from zero.
+
+
+PHASE 7 - WHEN TO STOP TRAINING
+===============================
+
+Good signs:
+- Validation loss keeps dropping.
+- Sample outputs are readable.
+- RAVEN format appears naturally.
+- It stops generating huge broken paragraphs.
+
+Stop or refine when:
+- Validation loss stops improving for a long time.
+- Outputs improve in grammar but lose RAVEN personality.
+- The model memorizes repeated lines too strongly.
+- The model sounds like the largest source text instead of RAVEN.
+
+For this project, voice quality matters more than raw loss.
+
+
+PHASE 8 - UI PLAN
+=================
+
+Do not build the UI before the model speaks decently.
+First make terminal RAVEN good. Then wrap it.
+
+UI v1 - Simple local terminal
+-----------------------------
+
+Already handled by:
+
+   raven/main.py
+
+Use this until responses are good.
+
+UI v2 - Local web chat
+----------------------
+
+Build after model quality is acceptable.
+
+Recommended features:
+- Chat window
+- Mode selector
+- Temperature/top_k shown in status
+- Clear conversation button
+- 3-turn memory reset button
+- "RAVEN READY" boot status
+- Streaming/typing effect in the browser
+
+Backend responsibilities:
+- Load raven_tokenizer.json
+- Load raven_weights.pt
+- Keep conversation history
+- Call the same generation logic as main.py
+- Return only cleaned RAVEN response
+
+Frontend responsibilities:
+- Input box
+- Send button
+- Mode dropdown
+- Status panel
+- Chat transcript
+
+UI v3 - Polished RAVEN interface
+--------------------------------
+
+Add:
+- Dark cinematic theme
+- Subtle boot animation
+- Mode-specific color/accent
+- Local-only warning
+- Export conversation button
+- Prompt test panel for evaluation
+
+Avoid:
+- Marketing landing page
+- Corporate assistant styling
+- Huge decorative sections
+- Anything that hides the actual chat experience
+
+
+PHASE 9 - FINAL WORKFLOW
+========================
+
+1. Build or clean corpus.
+2. Train on Colab T4.
+3. Resume if disconnected.
+4. Download tokenizer + weights.
+5. Run terminal RAVEN locally.
+6. Test fixed prompts.
+7. Fix dataset based on failures.
+8. Retrain or continue training.
+9. Only then build the web UI.
+
+The order matters.
+Bad model plus pretty UI is still a bad model.

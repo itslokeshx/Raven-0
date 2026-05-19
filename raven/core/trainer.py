@@ -128,29 +128,37 @@ def load_or_encode_tokens(corpus_path, tokenizer):
         cached = torch.load(token_cache, map_location="cpu", weights_only=False)
         if isinstance(cached, dict) and cached.get("meta") == expected_meta:
             data = cached["tokens"]
-        elif isinstance(cached, torch.Tensor):
-            print("Old token cache format found; re-encoding.")
-            data = None
+            print(f"Token count: {len(data):,}")
+            return data.long()
         else:
-            print("Token cache is stale; re-encoding.")
-            data = None
-    else:
-        data = None
+            print("Token cache stale - re-encoding.")
 
-    if data is None:
-        print("Encoding corpus with BPE tokenizer...")
-        with open(corpus_path, "r", encoding="utf-8") as f:
-            text = f.read()
-        ids = tokenizer.encode(text, add_bos=True, add_eos=True)
-        dtype = torch.int32 if tokenizer.vocab_size <= 2**31 - 1 else torch.int64
-        data = torch.tensor(ids, dtype=dtype)
-        torch.save({"meta": expected_meta, "tokens": data}, token_cache)
-        print(f"Saved token cache: {token_cache}")
+    print("Encoding corpus in chunks to save RAM...")
+    chunk_size = 5 * 1024 * 1024  # 5MB chunks
+    all_ids = []
+    total_size = os.path.getsize(corpus_path)
+    processed = 0
+
+    with open(corpus_path, "r", encoding="utf-8") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            ids = tokenizer.encode(chunk)
+            all_ids.extend(ids)
+            processed += len(chunk.encode("utf-8"))
+            print(f"  Encoded {processed/1e6:.1f}MB / {total_size/1e6:.1f}MB", end="\r")
+
+    print(f"\nTotal tokens: {len(all_ids):,}")
+    dtype = torch.int32 if tokenizer.vocab_size <= 2**31 - 1 else torch.int64
+    data = torch.tensor(all_ids, dtype=dtype)
+
+    torch.save({"meta": expected_meta, "tokens": data}, token_cache)
+    print(f"Saved token cache: {token_cache}")
 
     if len(data) <= config.block_size + 1:
-        raise ValueError("Corpus is too small for the configured block_size.")
+        raise ValueError("Corpus too small for block_size.")
 
-    print(f"Token count: {len(data):,}")
     return data.long()
 
 
