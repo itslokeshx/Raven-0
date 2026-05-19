@@ -271,36 +271,34 @@ def generate(user_input, history, mode):
     return "", history
 
 
-with gr.Blocks(
-    theme=gr.themes.Monochrome(),
-    title="RAVEN",
-    css="""
-    .gradio-container {
-        max-width: 680px !important;
-        margin: auto !important;
-        font-family: 'Courier New', monospace !important;
-    }
-    #title {
-        text-align: center;
-        color: #ffffff;
-        font-size: 2rem;
-        font-family: monospace;
-        padding: 24px 0 4px 0;
-        letter-spacing: 0.3em;
-    }
-    #subtitle {
-        text-align: center;
-        color: #555;
-        font-size: 11px;
-        font-family: monospace;
-        padding-bottom: 20px;
-        letter-spacing: 0.1em;
-    }
-    .message-bubble-border {
-        font-family: monospace !important;
-    }
-    """
-) as demo:
+CUSTOM_CSS = """
+.gradio-container {
+    max-width: 680px !important;
+    margin: auto !important;
+    font-family: 'Courier New', monospace !important;
+}
+#title {
+    text-align: center;
+    color: #ffffff;
+    font-size: 2rem;
+    font-family: monospace;
+    padding: 24px 0 4px 0;
+    letter-spacing: 0.3em;
+}
+#subtitle {
+    text-align: center;
+    color: #555;
+    font-size: 11px;
+    font-family: monospace;
+    padding-bottom: 20px;
+    letter-spacing: 0.1em;
+}
+.message-bubble-border {
+    font-family: monospace !important;
+}
+"""
+
+with gr.Blocks(title="RAVEN") as demo:
 
     gr.HTML('<h1 id="title">RAVEN</h1>')
     gr.HTML('<p id="subtitle">Not an assistant. A presence.</p>')
@@ -308,7 +306,6 @@ with gr.Blocks(
     chatbot = gr.Chatbot(
         height=420,
         label="",
-        bubble_full_width=False,
         show_label=False,
     )
 
@@ -335,4 +332,4 @@ with gr.Blocks(
     msg.submit(generate, inputs=[msg, chatbot, mode], outputs=[msg, chatbot])
     clear.click(lambda: [], outputs=[chatbot])
 
-demo.launch()
+demo.launch(css=CUSTOM_CSS)
