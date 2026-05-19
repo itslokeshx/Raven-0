@@ -128,7 +128,8 @@ def find_file(filename):
     """
     Search for a file in priority order:
     1. Same directory as main.py
-    2. /content/drive/MyDrive/raven_checkpoints/
+    2. raven/ subdirectory
+    3. /content/drive/MyDrive/raven_checkpoints/
     Returns the path string if found, else None.
     """
     # Priority 1: same directory as this script
@@ -136,7 +137,12 @@ def find_file(filename):
     if os.path.isfile(local_path):
         return local_path
 
-    # Priority 2: Google Drive checkpoint directory
+    # Priority 2: raven/ subdirectory
+    sub_path = os.path.join(SCRIPT_DIR, "raven", filename)
+    if os.path.isfile(sub_path):
+        return sub_path
+
+    # Priority 3: Google Drive checkpoint directory
     drive_path = os.path.join("/content/drive/MyDrive/raven_checkpoints", filename)
     if os.path.isfile(drive_path):
         return drive_path
