@@ -30,15 +30,17 @@ raven/data/parts/*.txt
 corpus.txt
 *corpus.txt
 
-# RAVEN artifacts
+# RAVEN artifacts (root level)
+*.pt
+*.pth
+*.bin
+raven_tokenizer.json
+
+# RAVEN artifacts (legacy raven/ subdirectory)
 raven/*.pt
 raven/*.pth
 raven/*.bin
 raven/raven_tokenizer.json
-raven/raven_tokens.pt
-raven/raven_weights.pt
-raven/raven_checkpoint_latest.pt
-raven/raven_checkpoint_best.pt
 
 # Notebook/runtime noise
 .ipynb_checkpoints/
