@@ -9,11 +9,19 @@ A learning project. A character experiment. An honest attempt to understand how 
 
 This is not a production AI. It is not competing with GPT or Gemini.
 
+> [!WARNING]
+> **PRE-TRAINING FAILURE & RANDOM OUTPUTS**
+> In its current state, the model frequently throws completely random, garbled, or gibberish outputs for given inputs. It is crucial to document that this iteration failed to achieve general coherence due to two fundamental issues:
+>
+> 1. **Unclean Pre-Training Corpus:** The 520MB raw dataset used during pre-training was highly contaminated, uncurated, and unclean. The mix of classic literature, noisy dialogue templates, formatting artifacts, and unstructured prose caused the model to fit to raw noise rather than clean, structured language patterns.
+> 2. **Character-Level / Byte-Level Limitations:** The model is extremely small (30M parameters) and tokenizes/generates at a character/byte level rather than a high-level word/subword BPE level. Character-level models have a much higher cognitive burden to learn spelling, grammar, and syntax. When trained on an unclean corpus, this character-level bottleneck causes the model's generation to easily degenerate into chaotic, random character sequences and gibberish.
+
 RAVEN is a tiny transformer trained on a free GPU in under 3 hours. It has a strong personality on emotional and psychological topics, and it hallucinates on everything else. That is expected, documented, and part of what makes it interesting as a learning project.
 
 If you talk to RAVEN about procrastination, self-deception, discipline, or ego — it will often say something sharp and on-character. If you ask it about math, history, or factual topics — it will confidently generate something that sounds plausible and is often wrong.
 
 That is what a 30M parameter model trained on 520MB of mixed data does. Knowing why is the whole point.
+
 
 ---
 
@@ -166,10 +174,12 @@ Total encoded: 154,587,911 tokens
 Train: 139,129,119 tokens  
 Validation: 15,458,792 tokens
 
-**Why the model hallucinates:**  
-The corpus was designed around RAVEN's personality, not factual coverage. The science and math sections taught RAVEN the *format* and *tone* of answering those questions — not the actual facts. A 30M parameter model cannot reliably store and retrieve factual knowledge from 40MB of examples. It pattern-matches. Sometimes that produces correct answers. Often it produces confident-sounding wrong ones.
+**Why the model hallucinates and generates random output:**  
+1. **Unclean Pre-Training Corpus:** The 520MB mixed pre-training dataset was highly unclean and contaminated. Because it contained old literature, noisy web dumps, unstructured prose, and inconsistent conversational formats, the model learned raw noise patterns. Instead of generalizing to clean sentence structures, the model fit to random textual noise.
+2. **Character-Level / Byte-Level Limitations:** Operating at a tiny, character-level (or byte-level) resolution with only 30M parameters, the model does not utilize a high-level semantic word vocabulary. Without an exceptionally clean and vast dataset to guide character-level transition patterns, the model fails to build stable semantic associations. As a result, when faced with standard user inputs, it easily drifts and outputs chaotic, random sequences of characters.
 
-The ~43% of the corpus that was philosophy and literature also bleeds through occasionally, producing lines that sound like 19th century prose rather than RAVEN. This is a known artifact of the corpus composition and is the primary motivation for a future SFT run.
+Additionally, the science and math sections taught RAVEN only the *format* and *tone* of answering those questions, not the actual facts. A 30M parameter model cannot reliably store and retrieve factual knowledge from a small, noisy subset of examples. The ~43% of the corpus consisting of miscellaneous philosophy and literature also bleeds through constantly, producing lines of archaic, 19th-century prose rather than RAVEN's actual voice. This pre-training failure is the primary motivator for a future SFT (Supervised Fine-Tuning) run on a clean, curated conversational corpus.
+
 
 ---
 
