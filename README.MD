@@ -1,6 +1,6 @@
-# RAVEN
+# RAVEN-0
 
-RAVEN is a 30 million parameter language model built from scratch using raw PyTorch.  
+RAVEN-0 is a 30 million parameter language model built from scratch using raw PyTorch.  
 A learning project. A character experiment. An honest attempt to understand how language models actually work by building one from zero.
 
 ---
@@ -16,16 +16,16 @@ This is not a production AI. It is not competing with GPT or Gemini.
 > 1. **Unclean Pre-Training Corpus:** The 520MB raw dataset used during pre-training was highly contaminated, uncurated, and unclean. The mix of classic literature, noisy dialogue templates, formatting artifacts, and unstructured prose caused the model to fit to raw noise rather than clean, structured language patterns.
 > 2. **Character-Level / Byte-Level Limitations:** The model is extremely small (30M parameters) and tokenizes/generates at a character/byte level rather than a high-level word/subword BPE level. Character-level models have a much higher cognitive burden to learn spelling, grammar, and syntax. When trained on an unclean corpus, this character-level bottleneck causes the model's generation to easily degenerate into chaotic, random character sequences and gibberish.
 
-RAVEN is a tiny transformer trained on a free GPU in under 3 hours. It has a strong personality on emotional and psychological topics, and it hallucinates on everything else. That is expected, documented, and part of what makes it interesting as a learning project.
+RAVEN-0 is a tiny transformer trained on a free GPU in under 3 hours. It has a strong personality on emotional and psychological topics, and it hallucinates on everything else. That is expected, documented, and part of what makes it interesting as a learning project.
 
-If you talk to RAVEN about procrastination, self-deception, discipline, or ego — it will often say something sharp and on-character. If you ask it about math, history, or factual topics — it will confidently generate something that sounds plausible and is often wrong.
+If you talk to RAVEN-0 about procrastination, self-deception, discipline, or ego — it will often say something sharp and on-character. If you ask it about math, history, or factual topics — it will confidently generate something that sounds plausible and is often wrong.
 
 That is what a 30M parameter model trained on 520MB of mixed data does. Knowing why is the whole point.
 
 
 ---
 
-## What RAVEN Can Do
+## What RAVEN-0 Can Do
 
 **Works well:**
 - Psychological observations about human behavior
@@ -51,12 +51,12 @@ That is what a 30M parameter model trained on 520MB of mixed data does. Knowing 
 
 ## Character
 
-RAVEN is a rogue intelligence system. Calm. Sarcastic. Psychologically observant. It does not apologize for existing. It does not pad responses with enthusiasm.
+RAVEN-0 is a rogue intelligence system. Calm. Sarcastic. Psychologically observant. It does not apologize for existing. It does not pad responses with enthusiasm.
 
 ```
 User: I keep saying I'll start tomorrow.
 
-RAVEN:
+RAVEN-0:
 Tomorrow is where ambition goes to die.
 You've been its landlord for months now.
 ```
@@ -64,7 +64,7 @@ You've been its landlord for months now.
 ```
 User: I feel stuck.
 
-RAVEN:
+RAVEN-0:
 Stuck is the story you tell
 so you don't have to name
 what you're avoiding.
@@ -73,7 +73,7 @@ what you're avoiding.
 ```
 User: I want to change.
 
-RAVEN:
+RAVEN-0:
 No you don't.
 You want to have changed.
 Different thing entirely.
@@ -164,7 +164,7 @@ Val loss dropped consistently from 320 to 4.88. Every evaluation checkpoint prod
 
 | Category | Size | Purpose |
 |---|---|---|
-| RAVEN Dialogue | 300MB | Voice and personality conditioning |
+| RAVEN-0 Dialogue | 300MB | Voice and personality conditioning |
 | Psychological Observations | 80MB | Internal monologue and tone |
 | Dark Humor and Sarcasm | 60MB | Comedic timing |
 | Science Q&A | 40MB | Knowledge with personality overlay |
@@ -178,7 +178,7 @@ Validation: 15,458,792 tokens
 1. **Unclean Pre-Training Corpus:** The 520MB mixed pre-training dataset was highly unclean and contaminated. Because it contained old literature, noisy web dumps, unstructured prose, and inconsistent conversational formats, the model learned raw noise patterns. Instead of generalizing to clean sentence structures, the model fit to random textual noise.
 2. **Character-Level / Byte-Level Limitations:** Operating at a tiny, character-level (or byte-level) resolution with only 30M parameters, the model does not utilize a high-level semantic word vocabulary. Without an exceptionally clean and vast dataset to guide character-level transition patterns, the model fails to build stable semantic associations. As a result, when faced with standard user inputs, it easily drifts and outputs chaotic, random sequences of characters.
 
-Additionally, the science and math sections taught RAVEN only the *format* and *tone* of answering those questions, not the actual facts. A 30M parameter model cannot reliably store and retrieve factual knowledge from a small, noisy subset of examples. The ~43% of the corpus consisting of miscellaneous philosophy and literature also bleeds through constantly, producing lines of archaic, 19th-century prose rather than RAVEN's actual voice. This pre-training failure is the primary motivator for a future SFT (Supervised Fine-Tuning) run on a clean, curated conversational corpus.
+Additionally, the science and math sections taught RAVEN-0 only the *format* and *tone* of answering those questions, not the actual facts. A 30M parameter model cannot reliably store and retrieve factual knowledge from a small, noisy subset of examples. The ~43% of the corpus consisting of miscellaneous philosophy and literature also bleeds through constantly, producing lines of archaic, 19th-century prose rather than RAVEN-0's actual voice. This pre-training failure is the primary motivator for a future SFT (Supervised Fine-Tuning) run on a clean, curated conversational corpus.
 
 
 ---
@@ -199,7 +199,7 @@ Additionally, the science and math sections taught RAVEN only the *format* and *
 ## Try It
 
 Live demo:  
-**[huggingface.co/spaces/itslokeshx/Raven](https://huggingface.co/spaces/itslokeshx/Raven)**
+**[huggingface.co/spaces/itslokeshx/Raven-0](https://huggingface.co/spaces/itslokeshx/Raven-0)**
 
 Note: Math and science queries in the web app use deterministic code (Python eval and a knowledge dictionary) rather than the model, to prevent pure hallucination on factual questions. Everything else is raw model output.
 
@@ -208,8 +208,8 @@ Note: Math and science queries in the web app use deterministic code (Python eva
 ## Run Locally
 
 ```bash
-git clone https://github.com/itslokeshx/Raven.git
-cd Raven/raven
+git clone https://github.com/itslokeshx/Raven-0.git
+cd Raven-0/raven
 pip install torch tokenizers numpy
 python3 main.py
 ```
@@ -231,7 +231,7 @@ raven/
 ├── data/
 │   └── corpus.txt              ← training data (not committed)
 └── personality/
-    └── system_prompt.py        ← RAVEN's few-shot examples
+    └── system_prompt.py        ← RAVEN-0's few-shot examples
 
 Artifacts (not committed):
 raven_weights.pt                ← 128MB trained weights
@@ -258,7 +258,7 @@ raven_checkpoint_best.pt        ← best validation checkpoint
 
 ## What This Project Is
 
-RAVEN is a learning project. It was built to understand — not to impress.
+RAVEN-0 is a learning project. It was built to understand — not to impress.
 
 Building it required learning tokenization, embeddings, self-attention, multi-head attention, residual connections, layer normalization, feedforward networks, training loops, gradient accumulation, mixed precision, cosine scheduling, gradient clipping, checkpoint systems, temperature sampling, top-k and nucleus sampling. Every piece understood before it was used.
 
@@ -272,7 +272,7 @@ All of that is worth knowing. That is why it was built this way.
 
 ```
 v1  →  pretraining done, character present, hallucinations expected  ← current
-v2  →  SFT on pure RAVEN dialogue, personality locked, book text removed
+v2  →  SFT on pure RAVEN-0 dialogue, personality locked, book text removed
 v3  →  larger context window, better memory, BPE upgrade
 v4  →  tool use for math/science, reliable factual grounding
 ```
@@ -280,7 +280,7 @@ v4  →  tool use for math/science, reliable factual grounding
 ---
 
 ```
-RAVEN v1
+RAVEN-0 v1
 The machine watches.
 Built from scratch. Honest about its limits.
 ```
