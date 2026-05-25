@@ -196,15 +196,6 @@ Additionally, the science and math sections taught RAVEN-0 only the *format* and
 
 ---
 
-## Try It
-
-Live demo:  
-**[huggingface.co/spaces/itslokeshx/Raven-0](https://huggingface.co/spaces/itslokeshx/Raven-0)**
-
-Note: Math and science queries in the web app use deterministic code (Python eval and a knowledge dictionary) rather than the model, to prevent pure hallucination on factual questions. Everything else is raw model output.
-
----
-
 ## Run Locally
 
 ```bash
